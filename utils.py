@@ -1,4 +1,4 @@
-# utils.py - FINAL STABLE CODE (Guaranteed Output)
+# utils.py - FINAL STABLE CODE (Guaranteed Output and Wrapping)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import os
@@ -12,7 +12,8 @@ from io import BytesIO
 import time
 from typing import Optional, Tuple, Dict, Any
 
-# --- Configuration and Constants (Omitted for brevity) ---
+# --- Configuration and Constants ---
+
 EXPECTED_KEYS = [
     "main_subject", "topic_breakdown", "key_vocabulary",
     "formulas_and_principles", "teacher_insights",
@@ -203,6 +204,7 @@ class PDF(FPDF):
             print(f"Warning: NotoSans font files not found. Falling back to {self.font_name}.")
 
 
+    # CRITICAL FIX: Ensure title wraps correctly
     def create_title(self, title):
         self.set_font(self.font_name, "B", 24)
         self.set_fill_color(*COLORS["title_bg"])
@@ -210,6 +212,7 @@ class PDF(FPDF):
         
         title_width = self.w - 2 * self.l_margin
         
+        # Use multi_cell for wrapping, guaranteeing the title fits
         self.multi_cell(title_width, 10, title, border=0, align="C", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(10)
 
@@ -234,15 +237,14 @@ class PDF(FPDF):
                 self.set_fill_color(*COLORS["highlight_bg"])
                 self.set_font(self.font_name, 'B', 11)
                 
-                # Use cell to write the highlighted segment
+                # Write highlighted text inline
                 self.cell(self.get_string_width(highlight_text), line_height, highlight_text, fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
                 self.set_font(self.font_name, '', 11)
             else:
                 self.set_fill_color(255, 255, 255)
-                # Use write for normal text
+                # Write normal text inline
                 self.write(line_height, part) 
-        
-        # We handle the newline in the main save_to_pdf function
+
 
 # --- Save to PDF Function (Primary Output) ---
 def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choice: str = "Default (Compact)"):
@@ -274,7 +276,8 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
         for item in values:
             is_nested = isinstance(item, dict) and 'details' in item
             
-            content_width = pdf.w - pdf.l_margin - pdf.r_margin - 35 
+            # CRITICAL: Define the content area width based on margins and link width
+            content_area_width = pdf.w - pdf.l_margin - pdf.r_margin 
             link_cell_width = 30 
             
             if is_nested:
@@ -295,8 +298,8 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                     pdf.set_text_color(*COLORS["body_text"])
                     pdf.set_font(pdf.font_name, "", 11)
                     
-                    # Write the main text content, allowing it to wrap fully
-                    pdf.multi_cell(content_width, line_height, text_content, border=0, new_x=XPos.RMARGIN, new_y=YPos.TOP)
+                    # Use multi_cell for the text content, allowing it to wrap fully
+                    pdf.multi_cell(content_area_width - link_cell_width, line_height, text_content, border=0, new_x=XPos.RMARGIN, new_y=YPos.TOP)
                     
                     final_y = pdf.get_y()
                     
@@ -336,12 +339,8 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                         pdf.set_font(pdf.font_name, "", 11)
                         pdf.set_xy(value_start_x, pdf.get_y())
                         
-                        # Write the content
-                        if is_easy_read:
-                            pdf.write_highlighted_text(value_str, line_height)
-                        else:
-                            # Use multi_cell for the value to ensure wrapping
-                            pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        # Use multi_cell for the value to ensure wrapping
+                        pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 
                 final_y = pdf.y
                 
