@@ -1,4 +1,4 @@
-# utils.py - FINAL STABLE CODE (Guaranteed Output and Flow)
+# utils.py - FINAL BULLETPROOF STABLE CODE (Guaranteed Output and Flow)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import os
@@ -46,6 +46,7 @@ COLORS = {
 # --------------------------------------------------------------------------
 
 def extract_gemini_text(response) -> Optional[str]:
+    """Safely extracts text from Gemini response object."""
     response_text = getattr(response, "text", None)
     if not response_text and hasattr(response, "candidates") and response.candidates:
         try:
@@ -55,6 +56,7 @@ def extract_gemini_text(response) -> Optional[str]:
     return response_text
 
 def extract_clean_json(response_text: str) -> Optional[str]:
+    """Centralized and safer JSON extraction."""
     match = re.search(r'\{.*\}', response_text.strip(), re.DOTALL)
     
     if not match:
@@ -241,6 +243,13 @@ class PDF(FPDF):
                 self.set_fill_color(255, 255, 255)
                 self.write(line_height, part) 
 
+# --- NEW HELPER FOR TOLERANT EXTRACTION ---
+def get_content_text(item):
+    """Retrieves content text using multiple fallback keys, ensuring string output."""
+    if isinstance(item, dict):
+        text = item.get('detail') or item.get('explanation') or item.get('point') or item.get('text', '')
+        return str(text) # BULLETPROOF: Ensure return value is string
+    return str(item) # BULLETPROOF: Ensure return value is string
 
 # --- Save to PDF Function (Primary Output) ---
 def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choice: str = "Default (Compact)"):
@@ -285,7 +294,10 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                     timestamp_sec = int(detail_item.get('time', 0))
                     link = f"{base_url}&t={timestamp_sec}s"
                     
-                    detail_text = re.sub(r'\s+', ' ', detail_item.get('detail', '')).strip()
+                    # Use tolerant getter here
+                    detail_text = get_content_text(detail_item)
+                    
+                    detail_text = re.sub(r'\s+', ' ', detail_text).strip()
                     text_content = f"    - {detail_text}"
                     
                     start_y = pdf.get_y()
@@ -317,10 +329,9 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                 for sk, sv in item.items():
                     if sk != 'time':
                         title = sk.replace('_', ' ').title()
-                        value_str = re.sub(r'\s+', ' ', str(sv)).strip()
                         
-                        # Store Y position before writing
-                        current_y = pdf.get_y()
+                        # Use tolerant getter here
+                        value_str = re.sub(r'\s+', ' ', get_content_text({sk: sv})).strip()
                         
                         # 1. Write Title (Bold)
                         title_str = f"• {title}: "
