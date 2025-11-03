@@ -1,4 +1,4 @@
-# utils.py - FINAL CORRECTED UTILS VERSION
+# utils.py - FINAL STABLE CODE
 # -*- coding: utf-8 -*-
 import streamlit as st
 import os
@@ -29,7 +29,6 @@ You are a master academic analyst creating a concise, hyperlinked study guide fr
 [Instructions Section]
 """
 
-# 🎨 VIBRANT AND READABLE PALETTE 🎨
 COLORS = {
     "title_bg": (65, 105, 225),
     "title_text": (255, 255, 255),
@@ -39,7 +38,7 @@ COLORS = {
     "line": (178, 207, 255),
     "item_title_text": (205, 92, 92),
     "item_bullet_color": (150, 150, 150),
-    "highlight_bg": (255, 255, 153), 
+    "highlight_bg": (255, 255, 0)
 }
 
 # --------------------------------------------------------------------------
@@ -76,7 +75,6 @@ def extract_clean_json(response_text: str) -> Optional[str]:
 
 
 @st.cache_data(ttl=0) # Cache control for API calls
-# CRITICAL FIX: Added model_name and is_easy_read parameters
 def run_analysis_and_summarize(api_key: str, transcript_text: str, max_words: int, sections_list: list, user_prompt: str, model_name: str, is_easy_read: bool) -> Tuple[Optional[Dict[str, Any]], Optional[str], str]:
     
     sections_to_process = ", ".join(sections_list)
@@ -115,7 +113,6 @@ def run_analysis_and_summarize(api_key: str, transcript_text: str, max_words: in
         time.sleep(1)
         return None, "API Key Missing", full_prompt
         
-    print("    > Sending transcript to Gemini API...")
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name) 
@@ -159,10 +156,6 @@ def inject_custom_css():
         unsafe_allow_html=True
     )
     
-# --------------------------------------------------------------------------
-# --- CORE HELPER FUNCTIONS ---
-# --------------------------------------------------------------------------
-
 def get_video_id(url: str) -> str | None:
     """Extracts the YouTube video ID from a URL."""
     patterns = [
@@ -196,7 +189,7 @@ def ensure_valid_youtube_url(video_id: str) -> str:
 
 # --- PDF Class ---
 class PDF(FPDF):
-    # CRITICAL FIX: Added is_easy_read parameter to control line height
+    # CRITICAL FIX: Accepts base_path and is_easy_read
     def __init__(self, base_path, is_easy_read, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.font_name = "NotoSans"
@@ -209,6 +202,7 @@ class PDF(FPDF):
         except RuntimeError:
             self.font_name = "Arial" 
             print(f"Warning: NotoSans font files not found. Falling back to {self.font_name}.")
+
 
     def create_title(self, title):
         self.set_font(self.font_name, "B", 24)
@@ -228,7 +222,6 @@ class PDF(FPDF):
         self.line(self.get_x(), self.get_y(), self.get_x() + 190, self.get_y())
         self.ln(5)
 
-    # Provided highlighting function
     def write_highlighted_text(self, text, style=''):
         line_height = self.base_line_height
         self.set_font(self.font_name, style, 11)
@@ -247,7 +240,6 @@ class PDF(FPDF):
                 self.write(line_height, part)
         self.ln()
 
-
 # --- Save to PDF Function (Primary Output) ---
 # CRITICAL FIX: Accepts format_choice
 def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choice: str = "Default (Compact)"):
@@ -257,18 +249,23 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
     base_url = ensure_valid_youtube_url(video_id) 
     
     # Initialize PDF object, passing the mode flag
-    pdf = PDF(font_path=font_path, is_easy_read=is_easy_read)
+    pdf = PDF(base_path=font_path, is_easy_read=is_easy_read)
     pdf.add_page()
     pdf.create_title(data.get("main_subject", "Video Summary"))
     
-    # Use the dynamic line height set in the PDF class
     line_height = pdf.base_line_height
 
-    for key, values in data.items():
-        if key == "main_subject" or not values:
+    for friendly_name, json_key in {
+        'Topic Breakdown': 'topic_breakdown', 'Key Vocabulary': 'key_vocabulary',
+        'Formulas & Principles': 'formulas_and_principles', 'Teacher Insights': 'teacher_insights',
+        'Exam Focus Points': 'exam_focus_points', 'Common Mistakes': 'common_mistakes_explained',
+        'Key Points': 'key_points', 'Short Tricks': 'short_tricks', 'Must Remembers': 'must_remembers'
+    }.items():
+        values = data.get(json_key)
+        if not values:
             continue
             
-        pdf.create_section_heading(key.replace('_', ' ').title())
+        pdf.create_section_heading(friendly_name)
         
         for item in values:
             is_nested = isinstance(item, dict) and 'details' in item
@@ -318,7 +315,6 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                 
                 start_y = pdf.get_y()
                 
-                # Write Title and Value Sequentially
                 for sk, sv in item.items():
                     if sk != 'time':
                         title = sk.replace('_', ' ').title()
@@ -339,7 +335,7 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                         pdf.set_xy(value_start_x, pdf.get_y())
                         
                         if is_easy_read:
-                            pdf.write_highlighted_text(value_str) # Use <hl> logic
+                            pdf.write_highlighted_text(value_str)
                         else:
                             pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 
