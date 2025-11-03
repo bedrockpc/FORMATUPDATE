@@ -1,4 +1,4 @@
-# utils.py - FINAL STABLE CODE (Guaranteed Output and Wrapping)
+# utils.py - FINAL STABLE CODE (Guaranteed Output and Flow)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import os
@@ -204,7 +204,6 @@ class PDF(FPDF):
             print(f"Warning: NotoSans font files not found. Falling back to {self.font_name}.")
 
 
-    # CRITICAL FIX: Ensure title wraps correctly
     def create_title(self, title):
         self.set_font(self.font_name, "B", 24)
         self.set_fill_color(*COLORS["title_bg"])
@@ -212,7 +211,6 @@ class PDF(FPDF):
         
         title_width = self.w - 2 * self.l_margin
         
-        # Use multi_cell for wrapping, guaranteeing the title fits
         self.multi_cell(title_width, 10, title, border=0, align="C", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(10)
 
@@ -237,12 +235,10 @@ class PDF(FPDF):
                 self.set_fill_color(*COLORS["highlight_bg"])
                 self.set_font(self.font_name, 'B', 11)
                 
-                # Write highlighted text inline
                 self.cell(self.get_string_width(highlight_text), line_height, highlight_text, fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
                 self.set_font(self.font_name, '', 11)
             else:
                 self.set_fill_color(255, 255, 255)
-                # Write normal text inline
                 self.write(line_height, part) 
 
 
@@ -276,7 +272,6 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
         for item in values:
             is_nested = isinstance(item, dict) and 'details' in item
             
-            # CRITICAL: Define the content area width based on margins and link width
             content_area_width = pdf.w - pdf.l_margin - pdf.r_margin 
             link_cell_width = 30 
             
@@ -298,7 +293,7 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                     pdf.set_text_color(*COLORS["body_text"])
                     pdf.set_font(pdf.font_name, "", 11)
                     
-                    # Use multi_cell for the text content, allowing it to wrap fully
+                    # Write the main text content, allowing it to wrap fully
                     pdf.multi_cell(content_area_width - link_cell_width, line_height, text_content, border=0, new_x=XPos.RMARGIN, new_y=YPos.TOP)
                     
                     final_y = pdf.get_y()
@@ -323,6 +318,9 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                     if sk != 'time':
                         title = sk.replace('_', ' ').title()
                         value_str = re.sub(r'\s+', ' ', str(sv)).strip()
+                        
+                        # Store Y position before writing
+                        current_y = pdf.get_y()
                         
                         # 1. Write Title (Bold)
                         title_str = f"• {title}: "
