@@ -1,4 +1,4 @@
-# utils.py - FINAL STABLE CODE
+# utils.py - FINAL STABLE CODE (Guaranteed Output)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import os
@@ -113,6 +113,7 @@ def run_analysis_and_summarize(api_key: str, transcript_text: str, max_words: in
         time.sleep(1)
         return None, "API Key Missing", full_prompt
         
+    print("    > Sending transcript to Gemini API...")
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name) 
@@ -189,12 +190,12 @@ def ensure_valid_youtube_url(video_id: str) -> str:
 
 # --- PDF Class ---
 class PDF(FPDF):
-    # CRITICAL FIX: Accepts base_path and is_easy_read
     def __init__(self, base_path, is_easy_read, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.font_name = "NotoSans"
         self.is_easy_read = is_easy_read
-        self.base_line_height = 10 if is_easy_read else 7 # Adjusted for better spacing in PDF
+        # Ensure base_line_height is guaranteed
+        self.base_line_height = 10 if is_easy_read else 7 
         
         try:
             self.add_font(self.font_name, "", str(base_path / "NotoSans-Regular.ttf"))
@@ -202,7 +203,6 @@ class PDF(FPDF):
         except RuntimeError:
             self.font_name = "Arial" 
             print(f"Warning: NotoSans font files not found. Falling back to {self.font_name}.")
-
 
     def create_title(self, title):
         self.set_font(self.font_name, "B", 24)
@@ -222,26 +222,37 @@ class PDF(FPDF):
         self.line(self.get_x(), self.get_y(), self.get_x() + 190, self.get_y())
         self.ln(5)
 
-    def write_highlighted_text(self, text, style=''):
-        line_height = self.base_line_height
-        self.set_font(self.font_name, style, 11)
+    # FINAL FIX FOR CONTENT FLOW AND HIGHLIGHTING
+    def write_highlighted_text(self, text, line_height):
+        """Writes text, handling <hl> tags and advancing the cursor properly."""
+        self.set_font(self.font_name, '', 11)
         self.set_text_color(*COLORS["body_text"])
         
+        # Split text by the highlighting tag
         parts = re.split(r'(<hl>.*?</hl>)', text)
+        
+        # Temporarily store the initial X position
+        start_x = self.get_x()
+        
         for part in parts:
             if part.startswith('<hl>'):
                 highlight_text = part[4:-5]
                 self.set_fill_color(*COLORS["highlight_bg"])
                 self.set_font(self.font_name, 'B', 11)
-                self.cell(self.get_string_width(highlight_text), line_height, highlight_text, fill=True)
-                self.set_font(self.font_name, style, 11)
+                
+                # Write highlighted text inline
+                self.cell(self.get_string_width(highlight_text), line_height, highlight_text, fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
+                self.set_font(self.font_name, '', 11)
             else:
                 self.set_fill_color(255, 255, 255)
-                self.write(line_height, part)
-        self.ln()
+                # Write normal text inline
+                self.write(line_height, part) 
+        
+        # Return cursor to the left margin to prepare for the next line's flow
+        self.set_x(self.l_margin)
+
 
 # --- Save to PDF Function (Primary Output) ---
-# CRITICAL FIX: Accepts format_choice
 def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choice: str = "Default (Compact)"):
     print(f"    > Saving elegantly hyperlinked PDF...")
     
@@ -255,12 +266,14 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
     
     line_height = pdf.base_line_height
 
-    for friendly_name, json_key in {
+    key_mapping = {
         'Topic Breakdown': 'topic_breakdown', 'Key Vocabulary': 'key_vocabulary',
         'Formulas & Principles': 'formulas_and_principles', 'Teacher Insights': 'teacher_insights',
         'Exam Focus Points': 'exam_focus_points', 'Common Mistakes': 'common_mistakes_explained',
         'Key Points': 'key_points', 'Short Tricks': 'short_tricks', 'Must Remembers': 'must_remembers'
-    }.items():
+    }
+
+    for friendly_name, json_key in key_mapping.items():
         values = data.get(json_key)
         if not values:
             continue
@@ -291,13 +304,10 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                     pdf.set_text_color(*COLORS["body_text"])
                     pdf.set_font(pdf.font_name, "", 11)
                     
-                    if is_easy_read:
-                        pdf.set_xy(pdf.l_margin, start_y)
-                        pdf.write_highlighted_text(text_content)
-                    else:
-                        pdf.multi_cell(content_width, line_height, text_content, border=0, new_x=XPos.RMARGIN, new_y=YPos.TOP)
+                    # Write the main text content, allowing it to wrap fully
+                    pdf.multi_cell(content_width, line_height, text_content, border=0, new_x=XPos.RMARGIN, new_y=YPos.TOP)
                     
-                    final_y = pdf.get_y() 
+                    final_y = pdf.get_y()
                     
                     # Position the cursor for the link placement
                     pdf.set_xy(pdf.w - pdf.r_margin - link_cell_width, final_y - line_height)
@@ -320,10 +330,14 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                         title = sk.replace('_', ' ').title()
                         value_str = re.sub(r'\s+', ' ', str(sv)).strip()
                         
+                        # Store Y position before starting this title/value block
+                        block_start_y = pdf.get_y()
+                        
                         # 1. Write Title (Bold)
                         title_str = f"• {title}: "
                         pdf.set_text_color(*COLORS["item_title_text"]) 
                         pdf.set_font(pdf.font_name, "B", 11)
+                        # Write the bold title part inline
                         pdf.cell(pdf.get_string_width(title_str), line_height, title_str, new_x=XPos.RIGHT, new_y=YPos.TOP)
                         
                         # 2. Write Value (Normal, Wrapping)
@@ -334,14 +348,16 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                         pdf.set_font(pdf.font_name, "", 11)
                         pdf.set_xy(value_start_x, pdf.get_y())
                         
-                        if is_easy_read:
-                            pdf.write_highlighted_text(value_str)
-                        else:
-                            pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                
+                        # Use multi_cell for the value to ensure wrapping
+                        pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        
+                        # Move cursor back to the left margin for the next item's title
+                        pdf.set_xy(pdf.l_margin, pdf.get_y()) 
+
                 final_y = pdf.y
                 
                 # Position the cursor for the link placement
+                # Target the Y position of the last written line
                 pdf.set_xy(pdf.w - pdf.r_margin - link_cell_width, final_y - line_height)
                 
                 # Place the timestamp link
