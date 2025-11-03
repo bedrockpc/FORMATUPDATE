@@ -12,8 +12,7 @@ from io import BytesIO
 import time
 from typing import Optional, Tuple, Dict, Any
 
-# --- Configuration and Constants ---
-
+# --- Configuration and Constants (Omitted for brevity) ---
 EXPECTED_KEYS = [
     "main_subject", "topic_breakdown", "key_vocabulary",
     "formulas_and_principles", "teacher_insights",
@@ -194,7 +193,6 @@ class PDF(FPDF):
         super().__init__(*args, **kwargs)
         self.font_name = "NotoSans"
         self.is_easy_read = is_easy_read
-        # Ensure base_line_height is guaranteed
         self.base_line_height = 10 if is_easy_read else 7 
         
         try:
@@ -203,6 +201,7 @@ class PDF(FPDF):
         except RuntimeError:
             self.font_name = "Arial" 
             print(f"Warning: NotoSans font files not found. Falling back to {self.font_name}.")
+
 
     def create_title(self, title):
         self.set_font(self.font_name, "B", 24)
@@ -222,17 +221,12 @@ class PDF(FPDF):
         self.line(self.get_x(), self.get_y(), self.get_x() + 190, self.get_y())
         self.ln(5)
 
-    # FINAL FIX FOR CONTENT FLOW AND HIGHLIGHTING
     def write_highlighted_text(self, text, line_height):
         """Writes text, handling <hl> tags and advancing the cursor properly."""
         self.set_font(self.font_name, '', 11)
         self.set_text_color(*COLORS["body_text"])
         
-        # Split text by the highlighting tag
         parts = re.split(r'(<hl>.*?</hl>)', text)
-        
-        # Temporarily store the initial X position
-        start_x = self.get_x()
         
         for part in parts:
             if part.startswith('<hl>'):
@@ -240,17 +234,15 @@ class PDF(FPDF):
                 self.set_fill_color(*COLORS["highlight_bg"])
                 self.set_font(self.font_name, 'B', 11)
                 
-                # Write highlighted text inline
+                # Use cell to write the highlighted segment
                 self.cell(self.get_string_width(highlight_text), line_height, highlight_text, fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
                 self.set_font(self.font_name, '', 11)
             else:
                 self.set_fill_color(255, 255, 255)
-                # Write normal text inline
+                # Use write for normal text
                 self.write(line_height, part) 
         
-        # Return cursor to the left margin to prepare for the next line's flow
-        self.set_x(self.l_margin)
-
+        # We handle the newline in the main save_to_pdf function
 
 # --- Save to PDF Function (Primary Output) ---
 def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choice: str = "Default (Compact)"):
@@ -259,7 +251,6 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
     is_easy_read = format_choice.startswith("Easier Read")
     base_url = ensure_valid_youtube_url(video_id) 
     
-    # Initialize PDF object, passing the mode flag
     pdf = PDF(base_path=font_path, is_easy_read=is_easy_read)
     pdf.add_page()
     pdf.create_title(data.get("main_subject", "Video Summary"))
@@ -330,9 +321,6 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                         title = sk.replace('_', ' ').title()
                         value_str = re.sub(r'\s+', ' ', str(sv)).strip()
                         
-                        # Store Y position before starting this title/value block
-                        block_start_y = pdf.get_y()
-                        
                         # 1. Write Title (Bold)
                         title_str = f"• {title}: "
                         pdf.set_text_color(*COLORS["item_title_text"]) 
@@ -348,16 +336,16 @@ def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choic
                         pdf.set_font(pdf.font_name, "", 11)
                         pdf.set_xy(value_start_x, pdf.get_y())
                         
-                        # Use multi_cell for the value to ensure wrapping
-                        pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                        
-                        # Move cursor back to the left margin for the next item's title
-                        pdf.set_xy(pdf.l_margin, pdf.get_y()) 
-
+                        # Write the content
+                        if is_easy_read:
+                            pdf.write_highlighted_text(value_str, line_height)
+                        else:
+                            # Use multi_cell for the value to ensure wrapping
+                            pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                
                 final_y = pdf.y
                 
                 # Position the cursor for the link placement
-                # Target the Y position of the last written line
                 pdf.set_xy(pdf.w - pdf.r_margin - link_cell_width, final_y - line_height)
                 
                 # Place the timestamp link
