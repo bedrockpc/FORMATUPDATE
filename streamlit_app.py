@@ -5,8 +5,9 @@ from io import BytesIO
 import json 
 from typing import List, Dict, Any
 
-# NOTE: The cosmetic CSS (brand hiding) is omitted here for file cleanliness 
-# but should be pasted at the top of your actual file using st.markdown.
+# Call the CSS injection function (for base styling)
+# NOTE: The styling rules are inside utils.py, which you should update too.
+inject_custom_css()
 
 # --- Application Setup ---
 st.title("📹 AI-Powered Hyperlinked Video Notes Generator")
@@ -94,7 +95,7 @@ def update_word_limit_default():
 
 
 # --------------------------------------------------------------------------
-# --- Sidebar for User Inputs and Controls (THE MISSING LOGIC) ---
+# --- Sidebar for User Inputs and Controls (ALL CONTROLS RESTORED) ---
 # --------------------------------------------------------------------------
 with st.sidebar:
     st.header("🔑 Configuration")
@@ -242,7 +243,7 @@ if run_analysis and not st.session_state['processing']:
         if is_flash:
             transcript_parts = split_transcript_by_parts(transcript_text, int(num_parts))
         else:
-            transcript_parts = [transcript_text]
+            transcript_parts = [transcript_text] # Pro runs the full transcript in one part
         
         st.info(f"Analyzing in **{len(transcript_parts)}** sequential part(s) using **{model_choice}**.")
 
