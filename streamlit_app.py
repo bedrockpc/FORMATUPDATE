@@ -6,7 +6,6 @@ import json
 from typing import List, Dict, Any
 
 # Call the CSS injection function (for base styling)
-# NOTE: The styling rules are inside utils.py, which you should update too.
 inject_custom_css()
 
 # --- Application Setup ---
@@ -29,7 +28,7 @@ if 'processing' not in st.session_state:
 if 'max_words_value' not in st.session_state:
     st.session_state['max_words_value'] = 3000 # Default for Pro model
 
-# --- 🔧 CORE HELPER FUNCTIONS ---
+# --- 🔧 CORE HELPER FUNCTIONS (Restored) ---
 
 def split_transcript_by_parts(transcript: str, num_parts: int) -> List[str]:
     """Splits transcript text into equal parts, clamping num_parts to avoid empty strings."""
@@ -47,7 +46,7 @@ def split_transcript_by_parts(transcript: str, num_parts: int) -> List[str]:
     return parts
 
 def merge_all_json_outputs(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Combines outputs with robust merging and stable deduplication."""
+    """Final Merging: Combines outputs with robust merging and stable deduplication."""
     LIST_KEYS = [
         "topic_breakdown", "key_vocabulary", "formulas_and_principles", 
         "teacher_insights", "exam_focus_points", "common_mistakes_explained", 
@@ -95,7 +94,7 @@ def update_word_limit_default():
 
 
 # --------------------------------------------------------------------------
-# --- Sidebar for User Inputs and Controls (ALL CONTROLS RESTORED) ---
+# --- Sidebar for User Inputs and Controls ---
 # --------------------------------------------------------------------------
 with st.sidebar:
     st.header("🔑 Configuration")
