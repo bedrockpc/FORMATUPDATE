@@ -9,6 +9,8 @@ from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
+# --- CRITICAL FIX: Explicitly import the types module for GenerateContentConfig ---
+from google.generativeai import types 
 
 # --- CONSTANTS and SETUP ---
 COLORS = {
@@ -144,7 +146,7 @@ def run_analysis_and_summarize(
         base_instruction += " **Use plain text only. AVOID using any LaTeX commands unless absolutely necessary.**"
 
     if is_maths_on:
-        # 🔑 CRITICAL FIX: Changed $$rac{a}{b}$$ to $$\\frac{a}{b}$$
+        # CRITICAL FIX: Corrected syntax for \frac
         maths_instruction = "For all mathematics, use standard LaTeX syntax (e.g., $$\\frac{a}{b}$$ or $\\sqrt{x^2}$). Enclose all display equations in double dollar signs ($$...). "
         
     if is_chemistry_on:
@@ -191,7 +193,7 @@ USER PREFERENCES: {user_prompt}
         # NOTE: Reduced output tokens to prevent mid-response truncation on large inputs
         response = model.generate_content(
             full_prompt,
-            config=genai.types.GenerateContentConfig(
+            config=types.GenerateContentConfig( # Uses the types imported at the top
                  max_output_tokens=20000 
             )
         )
