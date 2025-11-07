@@ -1,67 +1,75 @@
 import io
 import base64
+import random
 from jinja2 import Template
 from weasyprint import HTML
 
-# Matplotlib setup for server-side rendering
+# --- Libraries for different rendering methods ---
+
+# 1. Matplotlib (High-Quality Raster/PNG)
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Library for Unicode fallback/view
+# 2. MathML (WeasyPrint Native HTML/CSS Interpretation)
+from latex2mathml.converter import convert as latex_to_mathml
+
+# 3. Unicode Text (Plain text conversion)
 import latex2unicode
 
-def latex_to_png_base64(latex_code: str) -> str:
-    """
-    Renders LaTeX math string to a high-DPI PNG and returns it as a Base64 Data URI.
-    This bypasses WeasyPrint's inability to run JavaScript for KaTeX/MathJax.
-    """
+# --- Core Comparison Functions ---
+
+def render_matplotlib_png(latex_code: str) -> str:
+    """Renders LaTeX to a high-DPI PNG and returns it as a Base64 Data URI."""
     try:
-        # Create figure for rendering. High DPI ensures quality.
+        # High DPI (300) ensures a sharp, print-quality image.
         fig = plt.figure(figsize=(4, 1), dpi=300)
         ax = fig.add_axes([0, 0, 1, 1])
         
-        # Add the LaTeX string. Must be wrapped in $...$ for Matplotlib to treat it as math.
+        # Must be wrapped in $...$ for Matplotlib to interpret as math.
         ax.text(0.5, 0.5, f'${latex_code}$', 
                 fontsize=16, 
                 verticalalignment='center', 
                 horizontalalignment='center')
         
-        # Hide the surrounding axis and borders
-        ax.axis('off')
+        ax.axis('off') # Hide the default axes
         
-        # Save the image to an in-memory buffer (BytesIO)
         buf = io.BytesIO()
         fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1, transparent=True)
-        plt.close(fig) # MUST close the figure to release memory
+        plt.close(fig) 
         
-        # Encode bytes to base64 and create the HTML-ready Data URI
         base64_encoded_data = base64.b64encode(buf.getvalue()).decode('utf-8')
         return f"data:image/png;base64,{base64_encoded_data}"
 
-    except Exception as e:
-        print(f"Matplotlib rendering error: {e}")
+    except Exception:
         return "" # Return empty string on failure
 
-def latex_to_unicode(latex_code: str) -> str:
-    """Converts a standard LaTeX math string to a Unicode math string."""
+def render_mathml(latex_code: str) -> str:
+    """Converts LaTeX to MathML, relying on WeasyPrint/browser for rendering."""
     try:
-        # Note: latex2unicode works best with simple symbols
+        # Note: MathML support in browsers/WeasyPrint can be inconsistent.
+        return latex_to_mathml(latex_code).strip()
+    except Exception:
+        return f'<span class="error-text">[MathML Conversion Error]</span>'
+
+def render_unicode(latex_code: str) -> str:
+    """Converts LaTeX to a plain Unicode string for text comparison."""
+    try:
         return latex2unicode.unicode_to_latex(latex_code)
     except Exception:
-        return f"⚠️ Unicode conversion failed for: {latex_code}"
+        return f'[Unicode Conversion Error]'
 
-def render_latex_to_pdf(latex_code: str) -> bytes:
+def generate_comparison_pdf(latex_code: str) -> bytes:
     """
-    Processes LaTeX input, generates a rendered image, and compiles a final PDF.
+    Compiles all three rendering results into a single HTML document 
+    and converts it to a PDF using WeasyPrint.
     """
-    # 1. Convert LaTeX to the PNG image Data URI
-    image_uri = latex_to_png_base64(latex_code)
-    
-    # 2. Convert LaTeX to Unicode for inclusion in the PDF
-    unicode_output = latex_to_unicode(latex_code)
+    # Run all three tests
+    png_uri = render_matplotlib_png(latex_code)
+    mathml_output = render_mathml(latex_code)
+    unicode_output = render_unicode(latex_code)
 
-    # 3. Handle Template Rendering
+    # Load and render HTML template
     try:
         with open("template.html", "r", encoding="utf-8") as f:
             template_str = f.read()
@@ -71,17 +79,24 @@ def render_latex_to_pdf(latex_code: str) -> bytes:
     template = Template(template_str)
     
     html_content = template.render(
-        # Pass all three formats to the template for inclusion in the static PDF
-        math_image_src=image_uri,
-        raw_latex_code=latex_code,
-        unicode_math=unicode_output,
-        # Determine if rendering succeeded for conditional display in PDF
-        render_success=bool(image_uri)
+        latex_input=latex_code,
+        png_uri=png_uri,
+        mathml_output=mathml_output,
+        unicode_output=unicode_output,
+        # Check success status for display in PDF
+        png_success=bool(png_uri and png_uri != ""),
+        mathml_success="[MathML Conversion Error]" not in mathml_output,
+        unicode_success="[Unicode Conversion Error]" not in unicode_output
     )
 
-    # 4. Convert HTML (containing the embedded PNG) to PDF
+    # Convert HTML → PDF
     pdf_file = io.BytesIO()
-    HTML(string=html_content).write_pdf(pdf_file)
+    # We set a base URL to handle external resources like Google Fonts
+    HTML(string=html_content, base_url='').write_pdf(pdf_file)
     pdf_file.seek(0)
     return pdf_file.read()
+
+def get_placeholder_latex() -> str:
+    """Provides a complex equation for initial testing."""
+    return r'\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6} \quad \text{or} \quad \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}'
 
