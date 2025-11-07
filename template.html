@@ -1,170 +1,238 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{{ data.main_subject | default("Study Notes") }}</title>
-
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" integrity="sha384-W8Ew2Ff7L2tG8dM6e7Wc2v8S7MhM8S6F9L4D5J1T7kL9D2sF1P4t0M8J7tG6V8K5" crossorigin="anonymous">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js" integrity="sha384-zIq6Hj4w6Z2F8d5Z2F8tM6F9L4D5J1T7kL9D2sF1P4t0M8J7tG6V8K5" crossorigin="anonymous"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
     
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/mhchem.min.js"></script>
+    <!-- KaTeX CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    
+    <!-- KaTeX JavaScript -->
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/mhchem.min.js"></script>
     
     <style>
-        /* General PDF Styles */
+        @page {
+            size: A4;
+            margin: 2.5cm 2cm;
+            
+            @top-center {
+                content: "{{ title }}";
+                font-size: 10pt;
+                color: #666;
+                font-family: 'Georgia', serif;
+            }
+            
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 9pt;
+                color: #999;
+            }
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body {
-            font-family: Arial, sans-serif;
-            margin: 0.75in;
-            font-size: {{ "11pt" if is_easy_read else "10pt" }};
-            color: {{ colors.text_dark }};
+            font-family: 'Georgia', serif;
+            font-size: 11pt;
+            line-height: 1.6;
+            color: #333;
+            background: white;
         }
         
-        /* Typography and Layout */
-        h1 {
-            color: {{ colors.primary_dark }};
-            font-size: 26pt;
+        .document {
+            max-width: 100%;
+        }
+        
+        /* Title Section */
+        .title-section {
             text-align: center;
-            margin-bottom: 20pt;
-            margin-top: 10pt;
+            margin-bottom: 2em;
+            padding-bottom: 1em;
+            border-bottom: 3px solid #2c3e50;
         }
         
-        /* Section Header Styling */
-        .section-header {
-            background-color: {{ colors.primary }};
-            color: white;
-            padding: 8pt 15pt;
-            margin-top: 20pt;
-            margin-bottom: 0pt;
+        h1 {
+            font-size: 28pt;
+            color: #2c3e50;
+            margin-bottom: 0.5em;
             font-weight: bold;
-            font-size: 14pt;
+            letter-spacing: 0.5px;
         }
         
-        .item-list {
-            padding-bottom: {{ "15pt" if is_easy_read else "10pt" }};
+        .summary {
+            font-size: 11pt;
+            color: #555;
+            font-style: italic;
+            margin-top: 1em;
+            padding: 1em;
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            page-break-inside: avoid;
         }
         
-        /* Paragraph/List Item Styling */
-        p {
-            margin-top: {{ "6pt" if is_easy_read else "3pt" }};
-            margin-bottom: {{ "6pt" if is_easy_read else "3pt" }};
-            line-height: {{ "1.6" if is_easy_read else "1.4" }};
-            padding-left: 15pt;
-            text-indent: -15pt; /* Creates a hanging indent for the list bullet */
+        /* Section Styling */
+        .section {
+            margin-bottom: 2em;
+            page-break-inside: avoid;
         }
         
-        .topic-head {
+        h2 {
+            font-size: 16pt;
+            color: #2c3e50;
+            margin-bottom: 0.8em;
+            padding-bottom: 0.3em;
+            border-bottom: 2px solid #3498db;
             font-weight: bold;
-            color: {{ colors.text_medium }};
-            margin-top: 10pt;
-            margin-left: 5pt;
-            text-indent: 0;
+        }
+        
+        .content {
+            font-size: 11pt;
+            text-align: justify;
+            margin-bottom: 1em;
+            line-height: 1.8;
+        }
+        
+        /* Key Points Styling */
+        .key-points {
+            margin-top: 1em;
+            padding: 1em;
+            background: #f8f9fa;
+            border-left: 4px solid #27ae60;
+            page-break-inside: avoid;
+        }
+        
+        .key-points h3 {
+            font-size: 12pt;
+            color: #27ae60;
+            margin-bottom: 0.5em;
+            font-weight: bold;
+        }
+        
+        .key-points ul {
+            list-style-type: none;
             padding-left: 0;
         }
-
-        /* Highlighting and Links */
-        .highlight-text {
-            background-color: {{ colors.bg_highlight }};
-            color: {{ colors.accent }};
-            font-weight: bold;
-        }
-        .timestamp-link {
-            color: {{ colors.link }};
-            font-weight: bold;
-            font-size: 8pt;
-            text-decoration: none;
-            margin-left: 5pt;
+        
+        .key-points li {
+            padding-left: 1.5em;
+            margin-bottom: 0.5em;
+            position: relative;
         }
         
-        /* Footer for Page Numbers (WeasyPrint @page rules) */
-        @page {
-            size: letter;
-            margin: 0.75in;
-            @bottom-left {
-                content: "Generated by AI Notes Generator";
-                font-size: 8pt;
-                color: {{ colors.text_light }};
+        .key-points li:before {
+            content: "●";
+            color: #27ae60;
+            font-weight: bold;
+            position: absolute;
+            left: 0;
+        }
+        
+        /* Math and Chemistry Styling */
+        .katex {
+            font-size: 1.1em;
+        }
+        
+        .katex-display {
+            margin: 1em 0;
+            text-align: center;
+        }
+        
+        /* Print Optimizations */
+        @media print {
+            body {
+                background: white;
             }
-            @bottom-right {
-                content: "Page " counter(page) " of " counter(pages);
-                font-size: 8pt;
-                color: {{ colors.text_light }};
+            
+            .section {
+                page-break-inside: avoid;
+            }
+            
+            h2 {
+                page-break-after: avoid;
             }
         }
         
-        /* KaTeX fixes for WeasyPrint */
-        .katex-display { 
-            margin: 1em 0 !important; 
-            text-align: center !important; 
+        /* Code and Technical Content */
+        code {
+            font-family: 'Courier New', monospace;
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10pt;
         }
-
+        
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1em 0;
+        }
+        
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
-
-    <h1>{{ data.main_subject | default("Video Study Notes") }}</h1>
-
-    {% for key, content in data.items() %}
-        {% if key != "main_subject" and content and content is iterable %}
-            {% set heading = key.replace("_", " ").title() %}
-            {% set icon = section_icons.get(key, "📌") %}
-
-            <div class="section-header">{{ icon }} {{ heading }}</div>
-
-            <div class="item-list">
-                {% if key == 'topic_breakdown' %}
-                    {% for topic in content %}
-                        {% if topic.topic %}
-                            <p class="topic-head">• {{ topic.topic }}</p>
-                        {% endif %}
-                        {% for detail in topic.details %}
-                            {% set text_content = detail.detail | default(detail.text) | default(detail.content) %}
-                            {% if text_content %}
-                                <p>• {{ text_content | safe }} {{ detail.timestamp_html | safe }}</p>
-                            {% endif %}
-                        {% endfor %}
-                    {% endfor %}
-                {% else %}
-                    {% for item in content %}
-                        {% set text_content = item.formula_or_principle | default(item.term) | default(item.insight) | default(item.point) | default(item.text) | default(item.mistake) | default(item.definition) %}
-                        {% if text_content %}
-                            <p>• {{ text_content | safe }} {{ item.timestamp_html | safe }}</p>
-                        {% endif %}
-                    {% endfor %}
-                {% endif %}
+    <div class="document">
+        <!-- Title Section -->
+        <div class="title-section">
+            <h1>{{ title }}</h1>
+            {% if summary %}
+            <div class="summary">
+                <strong>Summary:</strong> {{ summary }}
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Content Sections -->
+        {% for segment in segments %}
+        <div class="section">
+            <h2>{{ segment.heading }}</h2>
+            <div class="content">
+                {{ segment.content }}
             </div>
             
-        {% endif %}
-    {% endfor %}
-
+            {% if segment.key_points %}
+            <div class="key-points">
+                <h3>Key Points:</h3>
+                <ul>
+                    {% for point in segment.key_points %}
+                    <li>{{ point }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- KaTeX Auto-render Script -->
     <script>
         document.addEventListener("DOMContentLoaded", function() {
-            var elements = document.body.querySelectorAll('p, div, span, li, dt, dd');
-
-            elements.forEach(function(el) {
-                // Find and render $$...$$ (Display mode)
-                el.innerHTML = el.innerHTML.replace(/\$\$([\s\S]*?)\$\$/g, function(match, formula) {
-                    try {
-                        return '<div class="katex-display">' + katex.renderToString(formula.trim(), {
-                            throwOnError: false, 
-                            displayMode: true 
-                        }) + '</div>';
-                    } catch (e) {
-                        return match; 
-                    }
-                });
-
-                // Find and render $...$ (Inline mode)
-                el.innerHTML = el.innerHTML.replace(/\$([^$]+)\$/g, function(match, formula) {
-                    // Exclude links and already processed blocks
-                    if(el.closest('.timestamp-link')) return match; 
-                    try {
-                        return katex.renderToString(formula.trim(), {
-                            throwOnError: false, 
-                            displayMode: false 
-                        });
-                    } catch (e) {
-                        return match;
-                    }
-                });
+            renderMathInElement(document.body, {
+                delimiters: [
+                    {left: "$$", right: "$$", display: true},
+                    {left: "$", right: "$", display: false},
+                    {left: "\\[", right: "\\]", display: true},
+                    {left: "\\(", right: "\\)", display: false}
+                ],
+                throwOnError: false,
+                trust: true
             });
         });
     </script>
