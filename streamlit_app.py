@@ -1,29 +1,24 @@
 import streamlit as st
 from utilis import render_latex_to_pdf
 
-st.set_page_config(page_title="LaTeX → PDF Test", page_icon="🧮", layout="centered")
+st.title("🧮 Free LaTeX → PDF Renderer (No Gemini)")
 
-st.title("🧪 LaTeX to PDF Tester")
-st.write("Enter any LaTeX below and generate a rendered PDF.")
+sample = """Here are some test formulas:
 
-latex_input = st.text_area(
-    "Write LaTeX here (use $$ for equations):",
-    value="$$E = mc^2$$\n\n$$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$",
-    height=200
-)
+$$E = mc^2$$
+
+$$\\int_0^\\infty e^{-x^2} \\, dx = \\frac{\\sqrt{\\pi}}{2}$$
+"""
+
+latex_input = st.text_area("Enter LaTeX text here:", sample, height=250)
 
 if st.button("Generate PDF"):
-    try:
+    with st.spinner("Rendering PDF..."):
         pdf_bytes = render_latex_to_pdf(latex_input)
-        st.success("✅ PDF generated successfully!")
-
+        st.success("✅ Done!")
         st.download_button(
-            label="📥 Download PDF",
+            label="Download PDF",
             data=pdf_bytes,
-            file_name="latex_output.pdf",
+            file_name="latex_rendered.pdf",
             mime="application/pdf"
         )
-    except Exception as e:
-        st.error(f"Error: {e}")
-
-st.caption("Powered by Streamlit + WeasyPrint + KaTeX")
