@@ -1,6 +1,14 @@
+# Core Streamlit App
 streamlit
+
+# Gemini API Integration
 google-generativeai
-fpdf2
+
+# NEW PDF Generation (HTML-to-PDF via KaTeX)
+weasyprint
+Jinja2
+
+# Existing Libraries
 pandas
 openpyxl
 python-docx
