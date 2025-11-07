@@ -1,215 +1,235 @@
-# app.py
-
 import streamlit as st
 import json
-import re
-from io import BytesIO
-from pathlib import Path
+import os
+from datetime import datetime
+import google.generativeai as genai
+from utils import run_analysis_and_summarize, segment_raw_transcript, generate_pdf
 
-# Assuming utils.py and template.html are in the same directory
-from utils import (
-    run_analysis_and_summarize, 
-    save_to_pdf_weasyprint, 
-    get_video_id, 
-    inject_custom_css,
-    segment_raw_transcript 
+# Page configuration
+st.set_page_config(
+    page_title="AI Study Notes Generator",
+    page_icon="📚",
+    layout="wide"
 )
 
-# --- Configuration and Constants ---
-DEFAULT_MODEL = "gemini-2.5-flash"
-MODEL_OPTIONS = [DEFAULT_MODEL, "gemini-2.5-pro"] 
+# Initialize session state
+if 'api_key' not in st.session_state:
+    st.session_state.api_key = ""
+if 'processed_data' not in st.session_state:
+    st.session_state.processed_data = None
+if 'math_mode' not in st.session_state:
+    st.session_state.math_mode = True
+if 'chem_mode' not in st.session_state:
+    st.session_state.chem_mode = True
+if 'pdf_generated' not in st.session_state:
+    st.session_state.pdf_generated = False
 
-ALL_SECTIONS = {
-    "Topic Breakdown": "topic_breakdown",
-    "Key Vocabulary": "key_vocabulary",
-    "Formulas & Principles": "formulas_and_principles",
-    "Teacher Insights": "teacher_insights",
-    "Exam Focus Points": "exam_focus_points",
-    "Common Mistakes": "common_mistakes_explained",
-    "Key Points": "key_points",
-    "Short Tricks": "short_tricks",
-    "Must Remembers": "must_remembers",
-}
+# Header
+st.title("📚 AI Study Notes Generator")
+st.markdown("""
+Transform unstructured academic content (YouTube transcripts, lectures, etc.) into professionally formatted PDF study notes with LaTeX math and chemistry support.
+""")
 
-# --- SESSION STATE INITIALIZATION ---
-if 'math_on' not in st.session_state: st.session_state.math_on = False
-if 'chem_on' not in st.session_state: st.session_state.chem_on = False
-if 'sections_to_include' not in st.session_state:
-    st.session_state.sections_to_include = list(ALL_SECTIONS.values())
-
-# --- UI Layout ---
-def main():
-    inject_custom_css()
-    st.title("🧠 AI Study Notes Generator")
+# Sidebar for configuration
+with st.sidebar:
+    st.header("⚙️ Configuration")
     
-    # --- A. SIDEBAR: Settings ---
-    st.sidebar.header("⚙️ Analysis Settings")
-
-    # A1. Model Selection
-    model_choice = st.sidebar.selectbox(
-        "Select AI Model:",
-        options=MODEL_OPTIONS,
-        index=MODEL_OPTIONS.index(DEFAULT_MODEL),
-        help="2.5 Flash is fastest and cheapest. Pro offers superior reasoning but is slower."
+    # API Key Input
+    api_key = st.text_input(
+        "Gemini API Key",
+        type="password",
+        value=st.session_state.api_key,
+        help="Enter your Google Gemini API key"
     )
     
-    # A2. Output Length (Words)
-    st.sidebar.subheader("📄 Output Length")
-    max_words = st.sidebar.number_input(
-        "Target Length (Words):", 
-        min_value=200, 
-        max_value=20000, 
-        value=750, 
-        step=100,
-        help="Sets the approximate total word count for the notes (200 min, 20k max)."
-    )
-
-    # A3. Transcript Division
-    st.sidebar.subheader("🗂️ Analysis Depth")
-    transcript_divisions = st.sidebar.number_input(
-        "Transcript Divisions:",
-        min_value=1,
-        max_value=10,
-        value=3,
-        step=1,
-        help="Higher divisions lead to more focused, segmented analysis (1 min, 10 max)."
-    )
-    st.sidebar.info(f"Analysis Depth: **{transcript_divisions} divisions**") # This value is used in the prompt instructions
-
-    # A4. Maths/Chemistry Options
-    st.sidebar.subheader("🧪 $\\LaTeX$ Support")
-    st.sidebar.checkbox(
-        "Enable **Maths** $\sum$",
-        key='math_on',
-        help="Enables complex $\\LaTeX$ math rendering."
-    )
-    st.sidebar.checkbox(
-        "Enable **Chemistry** $\\ce{H2O}$",
-        key='chem_on',
-        help="Enables specialized $\\LaTeX$ mhchem commands."
-    )
-    st.sidebar.info(f"Mode: **{'Specialized' if st.session_state.math_on or st.session_state.chem_on else 'General'}**")
-
-
-    # A5. Output Section Checkboxes
-    st.sidebar.subheader("✅ Select Output Sections")
+    if api_key:
+        st.session_state.api_key = api_key
+        os.environ['GEMINI_API_KEY'] = api_key
     
-    selected_sections_keys = []
-    for readable_name, key_name in ALL_SECTIONS.items():
-        if st.sidebar.checkbox(
-            readable_name, 
-            value=key_name in st.session_state.sections_to_include,
-            key=f"check_{key_name}"
-        ):
-            selected_sections_keys.append(key_name)
+    st.markdown("---")
     
-    st.session_state.sections_to_include = selected_sections_keys
-
-
-    # --- B. MAIN AREA: Inputs and Output ---
-
-    # 1. API Key Input
-    # Ensure you set the GEMINI_API_KEY secret in Streamlit
-    api_key = st.secrets.get("GEMINI_API_KEY") or st.text_input(
-        "Enter your Gemini API Key:", type="password"
-    )
-
-    # 2. Main Inputs
-    video_url = st.text_input("YouTube Video URL:", help="Paste the full link here.")
+    # Feature toggles
+    st.header("🎛️ Feature Toggles")
     
-    # PDF Output Format
-    format_choice = st.radio(
-        "PDF Layout:",
-        ["Default (Compact)", "Easier Read (Spacious & Highlighted)"],
-        index=0,
-        horizontal=True
+    st.session_state.math_mode = st.checkbox(
+        "Math Mode",
+        value=st.session_state.math_mode,
+        help="Enable LaTeX math rendering (e.g., \\sum, \\int, \\frac)"
     )
     
-    # 3. Transcript and Query Input
-    st.subheader("Transcript & Query")
-    transcript_input = st.text_area(
-        "Paste Transcript (Raw Text or JSON Segments):", 
-        height=250, 
-        help="Paste raw text from a transcript. The tool will automatically segment it. For timestamps, paste your original JSON array."
+    st.session_state.chem_mode = st.checkbox(
+        "Chemistry Mode",
+        value=st.session_state.chem_mode,
+        help="Enable chemical formula rendering (e.g., \\ce{H2O}, \\ce{CO2})"
     )
-    user_prompt = st.text_area("Specific Focus/Query:", "Summarize the key concepts and formulas presented in the video.", height=100)
     
-    st.divider()
+    st.markdown("---")
+    
+    # Instructions
+    st.header("📖 How to Use")
+    st.markdown("""
+    1. Enter your Gemini API key
+    2. Toggle Math/Chemistry modes
+    3. Paste your transcript (structured JSON or raw text)
+    4. Click "Process Content"
+    5. Download your PDF
+    """)
+    
+    st.markdown("---")
+    st.markdown("**Note:** Math Mode uses LaTeX syntax like `$\\sum_{i=1}^{n}$`")
 
-    # 4. Generate Button
-    if st.button("Generate Study Notes PDF"):
-        if not api_key:
-            st.error("Please enter your Gemini API Key.")
-            return
+# Main content area
+col1, col2 = st.columns([1, 1])
 
-        video_id = get_video_id(video_url)
-        if not video_id:
-            st.error("Please enter a valid YouTube URL.")
-            return
-            
-        # --- Transcript Processing (Smart Validation) ---
-        transcript_input_raw = transcript_input.strip()
-
-        if not transcript_input_raw:
-            st.error("Transcript Input box cannot be empty.")
-            return
-
-        transcript_segments_to_send = []
-        try:
-            if transcript_input_raw.startswith('['):
-                # ATTEMPT JSON PARSING (Structured input)
-                transcript_segments_to_send = json.loads(transcript_input_raw)
-                if not isinstance(transcript_segments_to_send, list):
-                    raise TypeError("JSON input is not a list/array.")
-            else:
-                # FALLBACK TO RAW TEXT (Unstructured input)
-                transcript_segments_to_send = segment_raw_transcript(transcript_input_raw)
-
-        except (json.JSONDecodeError, TypeError):
-            # If parsing failed, try the segmenter one last time (safer check)
-            transcript_segments_to_send = segment_raw_transcript(transcript_input_raw)
-            
-        if not transcript_segments_to_send:
-            st.error("Could not process or segment the transcript text.")
-            return
+with col1:
+    st.header("📝 Input Content")
+    
+    input_format = st.radio(
+        "Input Format",
+        ["Raw Text", "Structured JSON"],
+        help="Select input format. Raw text will be auto-segmented."
+    )
+    
+    if input_format == "Raw Text":
+        user_input = st.text_area(
+            "Paste your transcript or lecture content here:",
+            height=400,
+            placeholder="Example:\n\nIntroduction to Calculus\n\nCalculus is the mathematical study of continuous change...\n\nDerivatives\n\nA derivative represents the rate of change..."
+        )
         
-        # --- CORE ANALYSIS CALL ---
-        with st.spinner(f"Analyzing transcript using {model_choice} (Length: {max_words} words)..."):
-            notes_data, error_msg, full_prompt = run_analysis_and_summarize(
-                api_key=api_key,
-                transcript_segments=transcript_segments_to_send,
-                max_words=max_words,
-                sections_list_keys=st.session_state.sections_to_include, 
-                user_prompt=user_prompt,
-                model_name=model_choice,
-                is_easy_read=format_choice.startswith("Easier Read"),
-                is_maths_on=st.session_state.math_on,
-                is_chemistry_on=st.session_state.chem_on
-            )
+        st.info("💡 Raw text will be automatically segmented into structured sections.")
+        
+    else:
+        user_input = st.text_area(
+            "Paste your structured JSON here:",
+            height=400,
+            placeholder="""Example:
+{
+  "title": "Introduction to Calculus",
+  "segments": [
+    {
+      "heading": "What is Calculus?",
+      "content": "Calculus is the study of continuous change..."
+    },
+    {
+      "heading": "Derivatives",
+      "content": "A derivative represents the rate of change..."
+    }
+  ]
+}"""
+        )
+        
+        st.info("💡 Provide structured JSON with 'title' and 'segments' fields.")
 
-        # --- PDF Generation ---
-        if notes_data:
-            st.success("Analysis complete! Generating PDF...")
-            output_buffer = BytesIO()
-            
-            save_to_pdf_weasyprint(
-                data=notes_data,
-                video_id=video_id,
-                output=output_buffer,
-                format_choice=format_choice
-            )
-            
-            # Offer download button
-            st.download_button(
-                label="📥 Download Study Notes PDF",
-                data=output_buffer.getvalue(),
-                file_name=f"{video_id}_study_notes.pdf",
-                mime="application/pdf"
-            )
+with col2:
+    st.header("🎨 Preview & Output")
+    
+    if st.session_state.processed_data:
+        st.success("✅ Content processed successfully!")
+        
+        # Display processed data preview
+        with st.expander("View Processed Structure", expanded=False):
+            st.json(st.session_state.processed_data)
+        
+        # Show summary
+        data = st.session_state.processed_data
+        st.metric("Document Title", data.get('title', 'N/A'))
+        st.metric("Number of Sections", len(data.get('segments', [])))
+        
+    else:
+        st.info("👆 Enter content and click 'Process Content' to begin")
+
+# Processing button
+st.markdown("---")
+col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+
+with col_btn2:
+    if st.button("🚀 Process Content", type="primary", use_container_width=True):
+        if not st.session_state.api_key:
+            st.error("❌ Please enter your Gemini API key in the sidebar.")
+        elif not user_input or user_input.strip() == "":
+            st.error("❌ Please enter some content to process.")
         else:
-            st.error(f"Analysis Failed: {error_msg}")
-            with st.expander("Show Prompt Sent to API (for debugging)"):
-                 st.code(full_prompt, language='json')
+            with st.spinner("🔄 Processing content with AI..."):
+                try:
+                    # Configure Gemini
+                    genai.configure(api_key=st.session_state.api_key)
+                    
+                    # Parse or segment input
+                    if input_format == "Structured JSON":
+                        try:
+                            input_data = json.loads(user_input)
+                        except json.JSONDecodeError:
+                            st.error("❌ Invalid JSON format. Please check your input.")
+                            st.stop()
+                    else:
+                        # Auto-segment raw text
+                        input_data = segment_raw_transcript(user_input)
+                    
+                    # Run AI analysis and summarization
+                    processed_data = run_analysis_and_summarize(
+                        input_data,
+                        math_mode=st.session_state.math_mode,
+                        chem_mode=st.session_state.chem_mode
+                    )
+                    
+                    st.session_state.processed_data = processed_data
+                    st.session_state.pdf_generated = False
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error processing content: {str(e)}")
+                    st.exception(e)
 
-if __name__ == "__main__":
-    main()
+# PDF Generation
+if st.session_state.processed_data:
+    st.markdown("---")
+    col_pdf1, col_pdf2, col_pdf3 = st.columns([1, 1, 1])
+    
+    with col_pdf2:
+        if st.button("📄 Generate PDF", type="secondary", use_container_width=True):
+            with st.spinner("🎨 Generating PDF with LaTeX rendering..."):
+                try:
+                    pdf_bytes = generate_pdf(st.session_state.processed_data)
+                    st.session_state.pdf_generated = True
+                    st.session_state.pdf_bytes = pdf_bytes
+                    
+                    # Offer download
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"study_notes_{timestamp}.pdf"
+                    
+                    st.download_button(
+                        label="⬇️ Download PDF",
+                        data=pdf_bytes,
+                        file_name=filename,
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    
+                    st.success("✅ PDF generated successfully!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error generating PDF: {str(e)}")
+                    st.exception(e)
+    
+    # If PDF already generated, show download button
+    if st.session_state.pdf_generated and 'pdf_bytes' in st.session_state:
+        with col_pdf2:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"study_notes_{timestamp}.pdf"
+            
+            st.download_button(
+                label="⬇️ Download PDF",
+                data=st.session_state.pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666;'>
+    <p>Built with Streamlit • Powered by Gemini 2.5 Flash • Rendered with WeasyPrint + KaTeX</p>
+</div>
+""", unsafe_allow_html=True)
