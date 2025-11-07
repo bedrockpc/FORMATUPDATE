@@ -1,4 +1,5 @@
 streamlit
-jinja2
 weasyprint
-latex2mathml
+jinja2
+matplotlib
+​​latex2unicode
