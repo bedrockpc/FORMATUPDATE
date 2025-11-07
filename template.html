@@ -2,64 +2,118 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>LaTeX Rendering Report</title>
+    <title>LaTeX Rendering Comparison Report</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             margin: 2cm;
-            color: #333;
+            color: #1f2937;
+            line-height: 1.6;
         }
-        h1, h2 { color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px; }
-        .section { margin-bottom: 30px; padding: 15px; border: 1px solid #d1d5db; border-radius: 8px; }
-        /* Image styling for WeasyPrint compatibility */
-        .math-image {
-            display: block;
-            margin: 20px auto;
-            max-width: 100%;
-            height: auto;
-            background-color: #f9fafb;
-            padding: 10px;
-            border-radius: 4px;
-        }
-        code {
-            display: block;
+        h1 { color: #059669; border-bottom: 3px solid #10b981; padding-bottom: 10px; }
+        h2 { color: #374151; margin-top: 25px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; }
+        .input-box {
             background-color: #f3f4f6;
+            padding: 15px;
+            border-left: 5px solid #6366f1;
+            margin-bottom: 20px;
+            font-family: monospace;
+        }
+        .comparison-section {
+            padding: 20px;
+            margin-bottom: 30px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        /* Styling for different results */
+        .result-box {
+            background-color: #ffffff;
+            padding: 15px;
+            text-align: center;
+            border-radius: 4px;
+            margin-top: 10px;
+            min-height: 50px; /* Ensure space even if content is small */
+        }
+        .math-image {
+            max-width: 90%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .raw-code {
+            display: block;
+            background-color: #e0f2f1;
             padding: 10px;
             border-radius: 4px;
-            overflow-x: auto;
             white-space: pre-wrap;
+            font-family: monospace;
+            text-align: left;
+            font-size: 14px;
         }
-        .error { color: #dc2626; font-weight: bold; }
+        .error-text {
+            color: #dc2626;
+            font-weight: bold;
+        }
+        .success-text {
+            color: #059669;
+            font-weight: bold;
+        }
+        
     </style>
 </head>
 <body>
-    <h1>LaTeX to PDF Conversion Report</h1>
-
-    <div class="section">
-        <h2>1. High-Quality Rendered Output (PNG Image)</h2>
-        {% if render_success %}
-            <p>This is the reliably rendered mathematical expression embedded as a high-resolution PNG image.</p>
-            <!-- The Base64 image data is dropped directly into the src attribute -->
-            <img src="{{ math_image_src }}" class="math-image" alt="Rendered Equation">
-        {% else %}
-            <p class="error">Rendering failed. The raw code is displayed below.</p>
-        {% endif %}
-    </div>
-
-    <div class="section">
-        <h2>2. Raw LaTeX Source Code</h2>
-        <p>This is the original input provided by the user.</p>
-        <code>{{ raw_latex_code }}</code>
-    </div>
+    <h1>LaTeX Rendering Test Report</h1>
     
-    <div class="section">
-        <h2>3. Unicode Text View</h2>
-        <p>This is an attempted conversion to standard Unicode characters. **Note: This conversion is limited and may fail for complex formulas.**</p>
-        <code>{{ unicode_math }}</code>
+    <h2>Original LaTeX Input</h2>
+    <div class="input-box">
+        {{ latex_input }}
     </div>
 
-    <p style="text-align: center; margin-top: 50px; color: #9ca3af;">Generated via Streamlit & WeasyPrint with Matplotlib Rendering.</p>
+    <!-- --- Comparison Section 1: Matplotlib (PNG Image) --- -->
+    <div class="comparison-section">
+        <h2>1. Matplotlib (PNG Image) Output</h2>
+        <p><strong>Method:</strong> Server-side rendering to a high-DPI raster image. This is highly reliable but produces PNG, not vector graphics.</p>
+        <p class="{% if png_success %}success-text{% else %}error-text{% endif %}">
+            Status: {% if png_success %}SUCCESS - Image embedded.{% else %}FAILED - See error in raw code preview.{% endif %}
+        </p>
+        <div class="result-box" style="background-color: #fffbeb;">
+            {% if png_success %}
+                <img src="{{ png_uri }}" class="math-image" alt="Matplotlib Render">
+            {% else %}
+                <p>Matplotlib failed to generate an image from the provided LaTeX.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- --- Comparison Section 2: MathML (HTML/CSS) Output --- -->
+    <div class="comparison-section">
+        <h2>2. MathML (WeasyPrint Native) Output</h2>
+        <p><strong>Method:</strong> Conversion to MathML XML, relying on WeasyPrint's internal rendering engine.</p>
+        <p class="{% if mathml_success %}success-text{% else %}error-text{% endif %}">
+            Status: {% if mathml_success %}SUCCESS - Raw MathML code injected.{% else %}FAILED - Conversion error occurred.{% endif %}
+        </p>
+        <div class="result-box" style="font-size: 20px;">
+            <!-- Rendered MathML output -->
+            {{ mathml_output }}
+        </div>
+        <p style="font-size: 10px; text-align: center; margin-top: 5px;">*The visual appearance above depends on WeasyPrint's MathML support, which is often inconsistent.*</p>
+    </div>
+
+    <!-- --- Comparison Section 3: Unicode Text Output --- -->
+    <div class="comparison-section">
+        <h2>3. Unicode Text Output</h2>
+        <p><strong>Method:</strong> Conversion to a plain text string using Unicode characters. **Not suitable for complex math.**</p>
+        <p class="{% if unicode_success %}success-text{% else %}error-text{% endif %}">
+            Status: {% if unicode_success %}SUCCESS - Plain text generated.{% else %}FAILED - Conversion error occurred.{% endif %}
+        </p>
+        <div class="raw-code">
+            {{ unicode_output }}
+        </div>
+    </div>
+
+    <p style="text-align: center; margin-top: 50px; color: #6b7280;">--- End of LaTeX Rendering Comparison ---</p>
 
 </body>
 </html>
