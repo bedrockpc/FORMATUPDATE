@@ -13,3 +13,7 @@ pandas
 openpyxl
 python-docx
 python-dotenv 
+# requirements.txt
+# ...
+google-generativeai>=0.10.0  # Use a recent version constraint
+# ...
