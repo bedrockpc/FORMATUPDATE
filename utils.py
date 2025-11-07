@@ -144,7 +144,8 @@ def run_analysis_and_summarize(
         base_instruction += " **Use plain text only. AVOID using any LaTeX commands unless absolutely necessary.**"
 
     if is_maths_on:
-        maths_instruction = "For all mathematics, use standard LaTeX syntax (e.g., $$\frac{a}{b}$$ or $\\sqrt{x^2}$). Enclose all display equations in double dollar signs ($$...). "
+        # 🔑 CRITICAL FIX: Changed $$rac{a}{b}$$ to $$\\frac{a}{b}$$
+        maths_instruction = "For all mathematics, use standard LaTeX syntax (e.g., $$\\frac{a}{b}$$ or $\\sqrt{x^2}$). Enclose all display equations in double dollar signs ($$...). "
         
     if is_chemistry_on:
         chem_instruction = "For all chemistry, use the mhchem LaTeX command (e.g., $\\ce{H2O}$ or $\\ce{A + B -> C}$). "
@@ -187,7 +188,13 @@ USER PREFERENCES: {user_prompt}
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name)
         
-        response = model.generate_content(full_prompt)
+        # NOTE: Reduced output tokens to prevent mid-response truncation on large inputs
+        response = model.generate_content(
+            full_prompt,
+            config=genai.types.GenerateContentConfig(
+                 max_output_tokens=20000 
+            )
+        )
         response_text = extract_gemini_text(response)
         
         if not response_text: return None, "Empty API response", full_prompt
