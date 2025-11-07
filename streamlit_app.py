@@ -3,20 +3,22 @@
 import streamlit as st
 import json
 import re
-from pathlib import Path
 from io import BytesIO
+from pathlib import Path
+
+# Assuming utils.py and template.html are in the same directory
 from utils import (
     run_analysis_and_summarize, 
     save_to_pdf_weasyprint, 
     get_video_id, 
-    inject_custom_css
+    inject_custom_css,
+    segment_raw_transcript 
 )
 
 # --- Configuration and Constants ---
 DEFAULT_MODEL = "gemini-2.5-flash"
 MODEL_OPTIONS = [DEFAULT_MODEL, "gemini-2.5-pro"] 
 
-# All available output sections (used for the checkboxes)
 ALL_SECTIONS = {
     "Topic Breakdown": "topic_breakdown",
     "Key Vocabulary": "key_vocabulary",
@@ -51,7 +53,7 @@ def main():
         help="2.5 Flash is fastest and cheapest. Pro offers superior reasoning but is slower."
     )
     
-    # A2. Output Length (Words) - UPDATED LIMITS
+    # A2. Output Length (Words)
     st.sidebar.subheader("📄 Output Length")
     max_words = st.sidebar.number_input(
         "Target Length (Words):", 
@@ -62,7 +64,7 @@ def main():
         help="Sets the approximate total word count for the notes (200 min, 20k max)."
     )
 
-    # A3. Transcript Division - UPDATED LIMITS
+    # A3. Transcript Division
     st.sidebar.subheader("🗂️ Analysis Depth")
     transcript_divisions = st.sidebar.number_input(
         "Transcript Divisions:",
@@ -72,8 +74,7 @@ def main():
         step=1,
         help="Higher divisions lead to more focused, segmented analysis (1 min, 10 max)."
     )
-    st.sidebar.info(f"Analysis Depth: **{transcript_divisions} divisions**")
-
+    st.sidebar.info(f"Analysis Depth: **{transcript_divisions} divisions**") # This value is used in the prompt instructions
 
     # A4. Maths/Chemistry Options
     st.sidebar.subheader("🧪 $\\LaTeX$ Support")
@@ -108,7 +109,8 @@ def main():
     # --- B. MAIN AREA: Inputs and Output ---
 
     # 1. API Key Input
-    api_key = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else st.text_input(
+    # Ensure you set the GEMINI_API_KEY secret in Streamlit
+    api_key = st.secrets.get("GEMINI_API_KEY") or st.text_input(
         "Enter your Gemini API Key:", type="password"
     )
 
@@ -126,9 +128,9 @@ def main():
     # 3. Transcript and Query Input
     st.subheader("Transcript & Query")
     transcript_input = st.text_area(
-        "Paste Transcript Segments (JSON Array):", 
+        "Paste Transcript (Raw Text or JSON Segments):", 
         height=250, 
-        help="Paste your structured JSON transcript segments here. e.g., [{'time': 10, 'text': '...'}]"
+        help="Paste raw text from a transcript. The tool will automatically segment it. For timestamps, paste your original JSON array."
     )
     user_prompt = st.text_area("Specific Focus/Query:", "Summarize the key concepts and formulas presented in the video.", height=100)
     
@@ -145,16 +147,32 @@ def main():
             st.error("Please enter a valid YouTube URL.")
             return
             
-        # --- Transcript Processing (Assume JSON input) ---
-        try:
-            transcript_segments_to_send = json.loads(transcript_input)
-            if not isinstance(transcript_segments_to_send, list):
-                st.error("Transcript input must be a valid JSON array of segments.")
-                return
-        except json.JSONDecodeError:
-            st.error("Invalid JSON format in the Transcript Input box.")
+        # --- Transcript Processing (Smart Validation) ---
+        transcript_input_raw = transcript_input.strip()
+
+        if not transcript_input_raw:
+            st.error("Transcript Input box cannot be empty.")
             return
 
+        transcript_segments_to_send = []
+        try:
+            if transcript_input_raw.startswith('['):
+                # ATTEMPT JSON PARSING (Structured input)
+                transcript_segments_to_send = json.loads(transcript_input_raw)
+                if not isinstance(transcript_segments_to_send, list):
+                    raise TypeError("JSON input is not a list/array.")
+            else:
+                # FALLBACK TO RAW TEXT (Unstructured input)
+                transcript_segments_to_send = segment_raw_transcript(transcript_input_raw)
+
+        except (json.JSONDecodeError, TypeError):
+            # If parsing failed, try the segmenter one last time (safer check)
+            transcript_segments_to_send = segment_raw_transcript(transcript_input_raw)
+            
+        if not transcript_segments_to_send:
+            st.error("Could not process or segment the transcript text.")
+            return
+        
         # --- CORE ANALYSIS CALL ---
         with st.spinner(f"Analyzing transcript using {model_choice} (Length: {max_words} words)..."):
             notes_data, error_msg, full_prompt = run_analysis_and_summarize(
