@@ -2,4 +2,5 @@ streamlit
 weasyprint
 jinja2
 matplotlib
-​​latex2unicode
+latex2mathml
+latex2unicode
