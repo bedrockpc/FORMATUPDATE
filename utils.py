@@ -1,19 +1,46 @@
-# utils.py - FINAL BULLETPROOF STABLE CODE (Guaranteed Output and Flow)
-# -*- coding: utf-8 -*-
+# utils.py
+
 import streamlit as st
-import os
 import json
 import re
 from pathlib import Path
 import google.generativeai as genai
-from fpdf import FPDF
-from fpdf.enums import XPos, YPos
-from io import BytesIO 
+from io import BytesIO
 import time
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import HTML
+import os # For FileSystemLoader path
+
+# --- MODERN COLOR PALETTE (Kept for CSS in template) ---
+COLORS = {
+    "primary": "#1E88E5",
+    "primary_dark": "#1565C0",
+    "secondary": "#26A69A",
+    "accent": "#FF6F00",
+    "text_dark": "#212121",
+    "text_medium": "#424242",
+    "text_light": "#757575",
+    "bg_section": "#E3F2FD",
+    "bg_highlight": "#FFF59D",
+    "bg_card": "#FAFAFA",
+    "link": "#1976D2",
+}
+
+# Section icons/emojis (Kept for use in template)
+SECTION_ICONS = {
+    "topic_breakdown": "📚",
+    "key_vocabulary": "📖",
+    "formulas_and_principles": "🔬",
+    "teacher_insights": "💡",
+    "exam_focus_points": "⭐",
+    "common_mistakes_explained": "⚠️",
+    "key_points": "✨",
+    "short_tricks": "⚡",
+    "must_remembers": "🧠"
+}
 
 # --- Configuration and Constants ---
-
 EXPECTED_KEYS = [
     "main_subject", "topic_breakdown", "key_vocabulary",
     "formulas_and_principles", "teacher_insights",
@@ -21,350 +48,287 @@ EXPECTED_KEYS = [
     "key_points", "short_tricks", "must_remembers" 
 ]
 
-SYSTEM_PROMPT = """
-You are a master academic analyst creating a concise, hyperlinked study guide from a video transcript file. The transcript text contains timestamps in formats like (MM:SS) or [HH:MM:SS].
+# --- UTILITY FUNCTIONS ---
 
-**Primary Goal:** Create a detailed summary. For any key point you extract, you MUST find its closest preceding timestamp in the text and include it in your response as total seconds.
+def inject_custom_css():
+    """Modern CSS styling"""
+    st.markdown("""
+        <style>
+        .stApp {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        p, label, .stMarkdown {
+            font-size: 1.05rem !important;
+            line-height: 1.6;
+        }
+        .stButton>button {
+            background: linear-gradient(90deg, #1E88E5, #1565C0);
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            font-weight: 600;
+            border-radius: 8px;
+            transition: transform 0.2s;
+        }
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(30, 136, 229, 0.3);
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-[Instructions Section]
-"""
-
-COLORS = {
-    "title_bg": (65, 105, 225),
-    "title_text": (255, 255, 255),
-    "heading_text": (30, 30, 30),
-    "link_text": (0, 150, 136),
-    "body_text": (50, 50, 50),
-    "line": (178, 207, 255),
-    "item_title_text": (205, 92, 92),
-    "item_bullet_color": (150, 150, 150),
-    "highlight_bg": (255, 255, 0)
-}
-
-# --------------------------------------------------------------------------
-# --- STREAMLIT UTILITY FUNCTIONS ---
-# --------------------------------------------------------------------------
+def get_video_id(url: str) -> Optional[str]:
+    """Extract YouTube video ID"""
+    patterns = [r"(?<=v=)[^&#?]+", r"(?<=be/)[^&#?]+", r"(?<=live/)[^&#?]+", r"(?<=embed/)[^&#?]+", r"(?<=shorts/)[^&#?]+"]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(0)
+    return None
 
 def extract_gemini_text(response) -> Optional[str]:
-    """Safely extracts text from Gemini response object."""
-    response_text = getattr(response, "text", None)
-    if not response_text and hasattr(response, "candidates") and response.candidates:
+    """Extract text from Gemini API response"""
+    if hasattr(response, 'text'):
+        return response.text
+    if hasattr(response, 'candidates') and response.candidates:
         try:
             return response.candidates[0].content.parts[0].text
         except (AttributeError, IndexError):
             pass
-    return response_text
-
-def extract_clean_json(response_text: str) -> Optional[str]:
-    """Centralized and safer JSON extraction."""
-    match = re.search(r'\{.*\}', response_text.strip(), re.DOTALL)
-    
-    if not match:
-        match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-    
-    if match:
-        cleaned_response = match.group(0).strip()
-        
-        cleaned_response = re.sub(r'[*•]', '', cleaned_response) 
-        
-        cleaned_response = cleaned_response.rstrip(',').rstrip('.').strip()
-
-        if not cleaned_response.endswith('}'):
-            cleaned_response += '}'
-        
-        return cleaned_response
     return None
 
+def extract_clean_json(response_text: str) -> Optional[str]:
+    """Extract JSON from response with markdown cleanup"""
+    cleaned = re.sub(r'```json\s*|\s*```', '', response_text)
+    match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if match:
+        json_str = match.group(0)
+        try:
+            json.loads(json_str)
+            return json_str
+        except json.JSONDecodeError:
+            pass
+    return None
 
-@st.cache_data(ttl=0) # Cache control for API calls
-def run_analysis_and_summarize(api_key: str, transcript_text: str, max_words: int, sections_list: list, user_prompt: str, model_name: str, is_easy_read: bool) -> Tuple[Optional[Dict[str, Any]], Optional[str], str]:
+def format_timestamp(seconds: int) -> str:
+    """Convert seconds to [MM:SS] or [HH:MM:SS]"""
+    seconds = int(seconds)
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
     
-    sections_to_process = ", ".join(sections_list)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+def get_content_text(item):
+    """Extract text content from various item structures"""
+    if isinstance(item, dict):
+        for key in ['detail', 'explanation', 'point', 'text', 'definition', 
+                    'formula_or_principle', 'insight', 'mistake', 'content']:
+            if key in item and item[key]:
+                return str(item[key])
+    return str(item) if item else ''
+
+
+# --- API INTERACTION ---
+
+@st.cache_data(ttl=0)
+def run_analysis_and_summarize(
+    api_key: str, 
+    transcript_segments: List[Dict], 
+    max_words: int, 
+    sections_list_keys: list, 
+    user_prompt: str, 
+    model_name: str, 
+    is_easy_read: bool,
+    is_maths_on: bool,        # <-- NEW
+    is_chemistry_on: bool     # <-- NEW
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], str]:
+    """Call Gemini API and return structured JSON"""
     
-    # Conditionally modify the SYSTEM_PROMPT for highlighting
-    if is_easy_read:
-        prompt_instructions = SYSTEM_PROMPT.replace('[Instructions Section]', """
-        4. **Highlighting:** Inside any 'detail', 'definition', 'explanation', or 'insight' string, find the single most critical phrase (3-5 words) and wrap it in `<hl>` and `</hl>` tags.
-        5. Be concise. Each point must be a short, clear sentence.
-        6. Extract the information for the following categories...
-        """)
+    sections_str = ", ".join(sections_list_keys)
+    
+    # 1. Base Prompt (Always on)
+    base_instruction = "You are an expert academic content analyzer. Extract structured study notes from video transcripts."
+    
+    # 2. LaTeX Configuration
+    maths_instruction = ""
+    chem_instruction = ""
+    
+    if is_maths_on or is_chemistry_on:
+        # If any specialized mode is ON, set the core instruction for LaTeX use.
+        base_instruction += " **Use LaTeX formatting for all complex mathematical and chemical notation.**"
     else:
-        prompt_instructions = SYSTEM_PROMPT.replace('[Instructions Section]', """
-        4. Be concise. Each point must be a short, clear sentence.
-        5. Extract the information for the following categories...
-        6. DO NOT use any special markdown or tags like <hl> in the final JSON content.
-        """)
+        # If General mode, instruct it to use plain text only.
+        base_instruction += " **Use plain text only. AVOID using any LaTeX commands unless absolutely necessary.**"
 
-    full_prompt = f"""
-    {prompt_instructions}
-
-    **CRITICAL INSTRUCTION: PROVIDE ONLY VALID, PURE JSON. DO NOT INCLUDE ANY MARKUP (**), BULLETS (•), OR SURROUNDING TEXT OUTSIDE THE JSON {{{{...}}}} BLOCK. THE JSON VALUES MUST CONTAIN ONLY CLEAN TEXT.**
-
-    **USER CONSTRAINTS (from Streamlit app):**
-    - Max Detail Length: {max_words} words.
-    - **REQUIRED OUTPUT CATEGORIES:** **{sections_to_process}**
-    - User Refinement Prompt: {user_prompt}
-
-    Transcript to Analyze:
-    ---
-    {transcript_text}
-    ---
-    """
-    
-    if not api_key:
-        time.sleep(1)
-        return None, "API Key Missing", full_prompt
+    if is_maths_on:
+        maths_instruction = "For all mathematics, use standard LaTeX syntax (e.g., $$\frac{a}{b}$$ or $\\sqrt{x^2}$). Enclose all display equations in double dollar signs ($$...). "
         
-    print("    > Sending transcript to Gemini API...")
+    if is_chemistry_on:
+        chem_instruction = "For all chemistry, use the mhchem LaTeX command (e.g., $\\ce{H2O}$ or $\\ce{A + B -> C}$). "
+
+    # 3. Highlighting Instruction
+    highlighting_instruction = (
+        "4. **Highlighting:** Wrap 2-4 critical words in <hl>text</hl> tags."
+        if is_easy_read else
+        "4. **NO special tags:** Use plain text only."
+    )
+    
+    # 4. Final Prompt Assembly
+    prompt_instructions = f"""
+{base_instruction}
+
+OUTPUT: Valid JSON object with these exact keys (use snake_case):
+{{ "main_subject": "...", "topic_breakdown": [...], ... }} 
+
+RULES:
+1. Use EXACT 'time' values from input (in seconds)
+2. {highlighting_instruction}
+3. Keep content concise and academic
+4. Return ONLY valid JSON (no markdown, no comments)
+5. Fill ALL requested sections with available content
+6. Target total length: ~{max_words} words across all sections
+7. Extract ONLY these categories: {sections_str}
+
+**SPECIAL FORMATTING RULES:**
+{maths_instruction}{chem_instruction}
+
+USER PREFERENCES: {user_prompt}
+"""
+    
+    transcript_json = json.dumps(transcript_segments, indent=2)
+    full_prompt = f"{prompt_instructions}\n\nTRANSCRIPT DATA:\n{transcript_json}"
+    
+    # ... (rest of the API interaction code is mostly unchanged, handles API call and JSON cleanup)
+    if not api_key:
+        return None, "API Key Missing", full_prompt
+    
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name) 
+        model = genai.GenerativeModel(model_name)
         
         response = model.generate_content(full_prompt)
         response_text = extract_gemini_text(response)
-
-        if not response_text:
-            return None, "API returned empty response.", full_prompt
         
-        cleaned_response = extract_clean_json(response_text)
-
-        if not cleaned_response:
-            return None, "JSON structure could not be extracted from API response.", full_prompt
-
-        json_data = json.loads(cleaned_response)
+        if not response_text:
+            return None, "Empty API response", full_prompt
+        
+        json_str = extract_clean_json(response_text)
+        if not json_str:
+            return None, f"No valid JSON found in response", full_prompt
+        
+        json_data = json.loads(json_str)
+        
+        def to_snake_case(s):
+            s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', s)
+            return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+        
+        # Ensure keys are snake_case and default values are present
+        json_data = {to_snake_case(k): v for k, v in json_data.items()}
+        for key in EXPECTED_KEYS:
+            if key not in json_data:
+                json_data[key] = "" if key == "main_subject" else []
+            elif key != "main_subject" and not isinstance(json_data[key], list):
+                json_data[key] = [json_data[key]] if json_data[key] else []
         
         return json_data, None, full_prompt
         
     except json.JSONDecodeError as e:
-        return None, f"JSON PARSE ERROR: {e}", full_prompt
+        return None, f"JSON Parse Error: {e}", full_prompt
     except Exception as e:
-        return None, f"Gemini API Error: {e}", full_prompt
-        
-def inject_custom_css():
-    """Injects custom CSS for application-wide styling."""
-    st.markdown(
-        """
-        <style>
-        p, label, .stMarkdown, .stTextArea, .stSelectbox {
-            font-size: 1.05rem !important; 
-        }
+        return None, f"API Error: {e}", full_prompt
 
-        .pdf-output-text p, .pdf-output-text div {
-            font-size: var(--custom-font-size);
-            line-height: 1.25;
-            margin-bottom: 0.2em;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
+# --- WEASYPRINT/JINJA2 PDF GENERATION ---
+
+# Set up Jinja2 environment (assumes template.html is in the same directory)
+# In Streamlit cloud, Path(__file__).parent is usually the root directory
+template_loader = FileSystemLoader(Path(__file__).parent)
+template_env = Environment(loader=template_loader)
+
+
+def process_data_for_template(data: dict, video_id: Optional[str], is_easy_read: bool) -> dict:
+    """Pre-process data: add timestamps, process highlights, and handle nested structures."""
+    
+    base_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else None
+    processed_data = data.copy()
+
+    def process_item(item):
+        """Processes a single dictionary item to add HTML-ready fields."""
+        if not isinstance(item, dict):
+            return item
+        
+        new_item = item.copy()
+        
+        # 1. Add formatted clickable timestamp link (HTML string)
+        timestamp = new_item.get('time')
+        if timestamp and base_url:
+            ts_formatted = format_timestamp(timestamp)
+            link_url = f"{base_url}&t={int(timestamp)}s"
+            new_item['timestamp_html'] = f'<a href="{link_url}" class="timestamp-link">[{ts_formatted}]</a>'
+        else:
+            new_item['timestamp_html'] = ''
+
+        # 2. Process highlighting tags (from <hl> to HTML/CSS)
+        # Note: We rely on the template CSS for the color/bolding
+        for key in new_item.keys():
+            if isinstance(new_item[key], str):
+                if is_easy_read:
+                    # Convert Gemini's custom tag to HTML span
+                    new_item[key] = re.sub(
+                        r'<hl>(.*?)</hl>', 
+                        r'<span class="highlight-text"><b>\1</b></span>', 
+                        new_item[key]
+                    )
+                else:
+                    # Remove tags if not in easy-read mode
+                    new_item[key] = re.sub(r'<hl>(.*?)</hl>', r'\1', new_item[key])
+        
+        return new_item
+
+    # Iterate over all sections (which are lists of items)
+    for k, v in processed_data.items():
+        if isinstance(v, list):
+            new_list = []
+            for item in v:
+                if k == 'topic_breakdown':
+                    # Handle nested topic breakdown structure
+                    new_topic = process_item(item)
+                    if 'details' in new_topic and isinstance(new_topic['details'], list):
+                        new_topic['details'] = [process_item(detail) for detail in new_topic['details']]
+                    new_list.append(new_topic)
+                else:
+                    # Handle flat lists
+                    new_list.append(process_item(item))
+            processed_data[k] = new_list
+            
+    return processed_data
+
+
+def save_to_pdf_weasyprint(
+    data: dict, 
+    video_id: Optional[str], 
+    output: BytesIO, 
+    format_choice: str = "Default (Compact)"
+):
+    """Generate PDF using WeasyPrint and KaTeX/mhchem HTML rendering."""
+    
+    template = template_env.get_template("template.html")
+    is_easy_read = format_choice.startswith("Easier Read")
+    
+    # Pre-process data for HTML rendering
+    processed_data = process_data_for_template(data, video_id, is_easy_read)
+    
+    # Render HTML using Jinja2
+    html_out = template.render(
+        data=processed_data,
+        section_icons=SECTION_ICONS,
+        is_easy_read=is_easy_read,
+        colors=COLORS
     )
     
-def get_video_id(url: str) -> str | None:
-    """Extracts the YouTube video ID from a URL."""
-    patterns = [
-        r"(?<=v=)[^&#?]+", r"(?<=be/)[^&#?]+", r"(?<=live/)[^&#?]+",
-        r"(?<=embed/)[^&#?]+", r"(?<=shorts/)[^&#?]+"
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match: return match.group(0)
-    return None
-
-def clean_gemini_response(response_text: str) -> str:
-    match = re.search(r'```json\s*(\{.*?\})\s*```|(\{.*?\})', response_text, re.DOTALL)
-    if match: return match.group(1) if match.group(1) else match.group(2)
-    return response_text.strip()
-
-def format_timestamp(total_seconds: int) -> str:
-    """Converts total seconds to [HH:MM:SS] or [MM:SS] format."""
-    total_seconds = int(total_seconds)
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    
-    if hours > 0:
-        return f"[{hours:02}:{minutes:02}:{seconds:02}]"
-    else:
-        return f"[{minutes:02}:{seconds:02}]"
-
-def ensure_valid_youtube_url(video_id: str) -> str:
-    return f"https://www.youtube.com/watch?v={video_id}"
-
-# --- PDF Class ---
-class PDF(FPDF):
-    def __init__(self, base_path, is_easy_read, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.font_name = "NotoSans"
-        self.is_easy_read = is_easy_read
-        self.base_line_height = 10 if is_easy_read else 7 
-        
-        try:
-            self.add_font(self.font_name, "", str(base_path / "NotoSans-Regular.ttf"))
-            self.add_font(self.font_name, "B", str(base_path / "NotoSans-Bold.ttf"))
-        except RuntimeError:
-            self.font_name = "Arial" 
-            print(f"Warning: NotoSans font files not found. Falling back to {self.font_name}.")
-
-
-    def create_title(self, title):
-        self.set_font(self.font_name, "B", 24)
-        self.set_fill_color(*COLORS["title_bg"])
-        self.set_text_color(*COLORS["title_text"])
-        
-        title_width = self.w - 2 * self.l_margin
-        
-        self.multi_cell(title_width, 10, title, border=0, align="C", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        self.ln(10)
-
-    def create_section_heading(self, heading):
-        self.set_font(self.font_name, "B", 16)
-        self.set_text_color(*COLORS["heading_text"])
-        self.cell(0, 10, heading, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        self.set_draw_color(*COLORS["line"])
-        self.line(self.get_x(), self.get_y(), self.get_x() + 190, self.get_y())
-        self.ln(5)
-
-    def write_highlighted_text(self, text, line_height):
-        """Writes text, handling <hl> tags and advancing the cursor properly."""
-        self.set_font(self.font_name, '', 11)
-        self.set_text_color(*COLORS["body_text"])
-        
-        parts = re.split(r'(<hl>.*?</hl>)', text)
-        
-        for part in parts:
-            if part.startswith('<hl>'):
-                highlight_text = part[4:-5]
-                self.set_fill_color(*COLORS["highlight_bg"])
-                self.set_font(self.font_name, 'B', 11)
-                
-                self.cell(self.get_string_width(highlight_text), line_height, highlight_text, fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
-                self.set_font(self.font_name, '', 11)
-            else:
-                self.set_fill_color(255, 255, 255)
-                self.write(line_height, part) 
-
-# --- NEW HELPER FOR TOLERANT EXTRACTION ---
-def get_content_text(item):
-    """Retrieves content text using multiple fallback keys, ensuring string output."""
-    if isinstance(item, dict):
-        text = item.get('detail') or item.get('explanation') or item.get('point') or item.get('text', '')
-        return str(text) # BULLETPROOF: Ensure return value is string
-    return str(item) # BULLETPROOF: Ensure return value is string
-
-# --- Save to PDF Function (Primary Output) ---
-def save_to_pdf(data: dict, video_id: str, font_path: Path, output, format_choice: str = "Default (Compact)"):
-    print(f"    > Saving elegantly hyperlinked PDF...")
-    
-    is_easy_read = format_choice.startswith("Easier Read")
-    base_url = ensure_valid_youtube_url(video_id) 
-    
-    pdf = PDF(base_path=font_path, is_easy_read=is_easy_read)
-    pdf.add_page()
-    pdf.create_title(data.get("main_subject", "Video Summary"))
-    
-    line_height = pdf.base_line_height
-
-    key_mapping = {
-        'Topic Breakdown': 'topic_breakdown', 'Key Vocabulary': 'key_vocabulary',
-        'Formulas & Principles': 'formulas_and_principles', 'Teacher Insights': 'teacher_insights',
-        'Exam Focus Points': 'exam_focus_points', 'Common Mistakes': 'common_mistakes_explained',
-        'Key Points': 'key_points', 'Short Tricks': 'short_tricks', 'Must Remembers': 'must_remembers'
-    }
-
-    for friendly_name, json_key in key_mapping.items():
-        values = data.get(json_key)
-        if not values:
-            continue
-            
-        pdf.create_section_heading(friendly_name)
-        
-        for item in values:
-            is_nested = isinstance(item, dict) and 'details' in item
-            
-            content_area_width = pdf.w - pdf.l_margin - pdf.r_margin 
-            link_cell_width = 30 
-            
-            if is_nested:
-                # 1. Write the Topic Name (Bold)
-                pdf.set_font(pdf.font_name, "B", 11)
-                pdf.multi_cell(0, line_height, text=f"  {item.get('topic', '')}", new_x=XPos.LMARGIN)
-                
-                # 2. Write all Details for that topic
-                for detail_item in item.get('details', []):
-                    timestamp_sec = int(detail_item.get('time', 0))
-                    link = f"{base_url}&t={timestamp_sec}s"
-                    
-                    # Use tolerant getter here
-                    detail_text = get_content_text(detail_item)
-                    
-                    detail_text = re.sub(r'\s+', ' ', detail_text).strip()
-                    text_content = f"    - {detail_text}"
-                    
-                    start_y = pdf.get_y()
-                    
-                    pdf.set_text_color(*COLORS["body_text"])
-                    pdf.set_font(pdf.font_name, "", 11)
-                    
-                    # Write the main text content, allowing it to wrap fully
-                    pdf.multi_cell(content_area_width - link_cell_width, line_height, text_content, border=0, new_x=XPos.RMARGIN, new_y=YPos.TOP)
-                    
-                    final_y = pdf.get_y()
-                    
-                    # Position the cursor for the link placement
-                    pdf.set_xy(pdf.w - pdf.r_margin - link_cell_width, final_y - line_height)
-                    
-                    # Place the timestamp link
-                    pdf.set_text_color(*COLORS["link_text"])
-                    pdf.cell(link_cell_width, line_height, text=format_timestamp(timestamp_sec), link=link, align="R")
-                    
-                    # Reset cursor position
-                    pdf.set_xy(pdf.l_margin, final_y)
-            
-            else:
-                timestamp_sec = int(item.get('time', 0))
-                link = f"{base_url}&t={timestamp_sec}s"
-                
-                start_y = pdf.get_y()
-                
-                for sk, sv in item.items():
-                    if sk != 'time':
-                        title = sk.replace('_', ' ').title()
-                        
-                        # Use tolerant getter here
-                        value_str = re.sub(r'\s+', ' ', get_content_text({sk: sv})).strip()
-                        
-                        # 1. Write Title (Bold)
-                        title_str = f"• {title}: "
-                        pdf.set_text_color(*COLORS["item_title_text"]) 
-                        pdf.set_font(pdf.font_name, "B", 11)
-                        # Write the bold title part inline
-                        pdf.cell(pdf.get_string_width(title_str), line_height, title_str, new_x=XPos.RIGHT, new_y=YPos.TOP)
-                        
-                        # 2. Write Value (Normal, Wrapping)
-                        value_start_x = pdf.get_x()
-                        remaining_width = pdf.w - pdf.r_margin - value_start_x - 5
-                        
-                        pdf.set_text_color(*COLORS["body_text"])
-                        pdf.set_font(pdf.font_name, "", 11)
-                        pdf.set_xy(value_start_x, pdf.get_y())
-                        
-                        # Use multi_cell for the value to ensure wrapping
-                        pdf.multi_cell(remaining_width, line_height, value_str, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                
-                final_y = pdf.y
-                
-                # Position the cursor for the link placement
-                pdf.set_xy(pdf.w - pdf.r_margin - link_cell_width, final_y - line_height)
-                
-                # Place the timestamp link
-                pdf.set_text_color(*COLORS["link_text"])
-                pdf.cell(link_cell_width, line_height, text=format_timestamp(timestamp_sec), link=link, align="R")
-                
-                # Reset cursor position
-                pdf.set_xy(pdf.l_margin, final_y)
-                
-            pdf.ln(2) 
-
-    pdf.output(output)
-    if isinstance(output, BytesIO):
-        output.seek(0)
+    # Generate PDF using WeasyPrint
+    HTML(string=html_out).write_pdf(output)
+    output.seek(0)
+    print("✅ PDF generated successfully using WeasyPrint/KaTeX.")
