@@ -2,20 +2,65 @@
 <html>
 <head>
     <meta charset="utf-8">
+    <title>LaTeX Rendering Report</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
         body {
-            font-family: "DejaVu Sans", sans-serif;
-            margin: 40px;
-            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            margin: 2cm;
+            color: #333;
         }
-        math {
-            font-size: 1.2em;
+        h1, h2 { color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px; }
+        .section { margin-bottom: 30px; padding: 15px; border: 1px solid #d1d5db; border-radius: 8px; }
+        /* Image styling for WeasyPrint compatibility */
+        .math-image {
             display: block;
-            margin: 10px 0;
+            margin: 20px auto;
+            max-width: 100%;
+            height: auto;
+            background-color: #f9fafb;
+            padding: 10px;
+            border-radius: 4px;
         }
+        code {
+            display: block;
+            background-color: #f3f4f6;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .error { color: #dc2626; font-weight: bold; }
     </style>
 </head>
 <body>
-    {{ content | safe }}
+    <h1>LaTeX to PDF Conversion Report</h1>
+
+    <div class="section">
+        <h2>1. High-Quality Rendered Output (PNG Image)</h2>
+        {% if render_success %}
+            <p>This is the reliably rendered mathematical expression embedded as a high-resolution PNG image.</p>
+            <!-- The Base64 image data is dropped directly into the src attribute -->
+            <img src="{{ math_image_src }}" class="math-image" alt="Rendered Equation">
+        {% else %}
+            <p class="error">Rendering failed. The raw code is displayed below.</p>
+        {% endif %}
+    </div>
+
+    <div class="section">
+        <h2>2. Raw LaTeX Source Code</h2>
+        <p>This is the original input provided by the user.</p>
+        <code>{{ raw_latex_code }}</code>
+    </div>
+    
+    <div class="section">
+        <h2>3. Unicode Text View</h2>
+        <p>This is an attempted conversion to standard Unicode characters. **Note: This conversion is limited and may fail for complex formulas.**</p>
+        <code>{{ unicode_math }}</code>
+    </div>
+
+    <p style="text-align: center; margin-top: 50px; color: #9ca3af;">Generated via Streamlit & WeasyPrint with Matplotlib Rendering.</p>
+
 </body>
 </html>
+
