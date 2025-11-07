@@ -16,21 +16,6 @@ from utils import (
 DEFAULT_MODEL = "gemini-2.5-flash"
 MODEL_OPTIONS = [DEFAULT_MODEL, "gemini-2.5-pro"] 
 
-# Presets for Output Length (Pages/Words)
-LENGTH_PRESETS = {
-    "Short (1-2 pages)": 500,
-    "Medium (3-4 pages)": 1000,
-    "Detailed (5-6 pages)": 1500,
-    "Max (7+ pages)": 2000
-}
-
-# Presets for Transcript Divisions (Affects analysis depth)
-DIVISION_PRESETS = {
-    "Quick": 1,
-    "Medium": 3,
-    "Detailed": 6
-}
-
 # All available output sections (used for the checkboxes)
 ALL_SECTIONS = {
     "Topic Breakdown": "topic_breakdown",
@@ -66,28 +51,28 @@ def main():
         help="2.5 Flash is fastest and cheapest. Pro offers superior reasoning but is slower."
     )
     
-    # A2. Output Length Preset
+    # A2. Output Length (Words) - UPDATED LIMITS
     st.sidebar.subheader("📄 Output Length")
-    length_preset_key = st.sidebar.selectbox(
-        "Choose Length Preset:",
-        options=list(LENGTH_PRESETS.keys()),
-        index=1
+    max_words = st.sidebar.number_input(
+        "Target Length (Words):", 
+        min_value=200, 
+        max_value=20000, 
+        value=750, 
+        step=100,
+        help="Sets the approximate total word count for the notes (200 min, 20k max)."
     )
-    max_words = LENGTH_PRESETS[length_preset_key]
-    st.sidebar.info(f"Approximate Length: **{max_words} words**")
 
-
-    # A3. Transcript Division Preset
+    # A3. Transcript Division - UPDATED LIMITS
     st.sidebar.subheader("🗂️ Analysis Depth")
-    div_preset_key = st.sidebar.selectbox(
+    transcript_divisions = st.sidebar.number_input(
         "Transcript Divisions:",
-        options=list(DIVISION_PRESETS.keys()),
-        index=1
+        min_value=1,
+        max_value=10,
+        value=3,
+        step=1,
+        help="Higher divisions lead to more focused, segmented analysis (1 min, 10 max)."
     )
-    # This feature requires custom logic to divide the transcript, 
-    # but we store the value for the prompt instruction.
-    transcript_divisions = DIVISION_PRESETS[div_preset_key] 
-    st.sidebar.info(f"Analysis Depth: **{div_preset_key}** (uses {transcript_divisions} divisions)")
+    st.sidebar.info(f"Analysis Depth: **{transcript_divisions} divisions**")
 
 
     # A4. Maths/Chemistry Options
@@ -108,13 +93,12 @@ def main():
     # A5. Output Section Checkboxes
     st.sidebar.subheader("✅ Select Output Sections")
     
-    # Generate checkboxes and update session state
     selected_sections_keys = []
     for readable_name, key_name in ALL_SECTIONS.items():
         if st.sidebar.checkbox(
             readable_name, 
             value=key_name in st.session_state.sections_to_include,
-            key=f"check_{key_name}" # Unique key for checkbox
+            key=f"check_{key_name}"
         ):
             selected_sections_keys.append(key_name)
     
@@ -177,7 +161,7 @@ def main():
                 api_key=api_key,
                 transcript_segments=transcript_segments_to_send,
                 max_words=max_words,
-                sections_list_keys=st.session_state.sections_to_include, # Use dynamic sections
+                sections_list_keys=st.session_state.sections_to_include, 
                 user_prompt=user_prompt,
                 model_name=model_choice,
                 is_easy_read=format_choice.startswith("Easier Read"),
