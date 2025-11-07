@@ -1,344 +1,136 @@
+# app.py
+
 import streamlit as st
-from utils import inject_custom_css, get_video_id, run_analysis_and_summarize, save_to_pdf
+import json
+import re
 from pathlib import Path
-from io import BytesIO 
-import json 
-from typing import List, Dict, Any
+from io import BytesIO
+from utils import (
+    run_analysis_and_summarize, 
+    save_to_pdf_weasyprint, 
+    get_video_id, 
+    inject_custom_css
+)
 
-# Call the CSS injection function (for base styling)
-inject_custom_css()
+# --- Configuration and Constants ---
+# You would usually get this from your environment variables or secrets
+MODEL_NAME = "gemini-2.5-flash" 
 
-# --- Application Setup ---
-st.title("📹 AI-Powered Hyperlinked Video Notes Generator")
+# --- SESSION STATE INITIALIZATION ---
+if 'math_on' not in st.session_state:
+    st.session_state.math_on = False
+if 'chem_on' not in st.session_state:
+    st.session_state.chem_on = False
 
-# --- Model Context Constants ---
-WARNING_THRESHOLD_CHARS = 300000 
-
-# Initialize session state variables
-if 'analysis_data' not in st.session_state:
-    st.session_state['analysis_data'] = None
-if 'api_key_valid' not in st.session_state:
-    st.session_state['api_key_valid'] = False
-if 'output_filename_base' not in st.session_state:
-    st.session_state['output_filename_base'] = "Video_Notes"
-if 'chunked_results' not in st.session_state:
-    st.session_state['chunked_results'] = []
-if 'processing' not in st.session_state:
-    st.session_state['processing'] = False
-if 'max_words_value' not in st.session_state:
-    st.session_state['max_words_value'] = 3000 # Default for Pro model
-
-# --- 🔧 CORE HELPER FUNCTIONS (Restored) ---
-
-def split_transcript_by_parts(transcript: str, num_parts: int) -> List[str]:
-    """Splits transcript text into equal parts, clamping num_parts to avoid empty strings."""
-    text = transcript or ""
-    length = len(text)
+# --- UI Layout ---
+def main():
+    inject_custom_css()
+    st.title("🧠 AI Study Notes Generator")
     
-    num_parts = max(1, min(num_parts, length)) 
-    part_size = length // num_parts
-    
-    parts = []
-    for i in range(num_parts):
-        start = i * part_size
-        end = (i + 1) * part_size if i < num_parts - 1 else length
-        parts.append(text[start:end])
-    return parts
-
-def merge_all_json_outputs(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Final Merging: Combines outputs with robust merging and stable deduplication."""
-    LIST_KEYS = [
-        "topic_breakdown", "key_vocabulary", "formulas_and_principles", 
-        "teacher_insights", "exam_focus_points", "common_mistakes_explained", 
-        "key_points", "short_tricks", "must_remembers"
-    ]
-    combined: Dict[str, Any] = {"main_subject": ""}
-    
-    for key in LIST_KEYS:
-        combined[key] = []
-        
-    for res in results:
-        for k, v in res.items():
-            if k == "main_subject":
-                if not combined.get("main_subject") and v:
-                    combined["main_subject"] = str(v).strip()
-                continue
-
-            if isinstance(v, list) and k in LIST_KEYS:
-                combined[k].extend(v)
-    
-    # Final Deduplication Logic (Safe and Stable)
-    for k in LIST_KEYS:
-        if combined[k]:
-            unique_items = []
-            seen_hashes = set()
-            
-            for item in combined[k]:
-                item_hash = json.dumps(item, sort_keys=True)
-                
-                if item_hash not in seen_hashes:
-                    unique_items.append(item)
-                    seen_hashes.add(item_hash)
-            
-            combined[k] = unique_items
-            
-    return combined
-
-def update_word_limit_default():
-    """Sets the default max_words value based on the selected model using callback."""
-    model = st.session_state.get('model_choice_select', 'gemini-2.5-pro')
-    if model == "gemini-2.5-flash":
-        st.session_state['max_words_value'] = 1000 # Flash default
-    else: # Pro
-        st.session_state['max_words_value'] = 3000 # Pro default
-
-
-# --------------------------------------------------------------------------
-# --- Sidebar for User Inputs and Controls ---
-# --------------------------------------------------------------------------
-with st.sidebar:
-    st.header("🔑 Configuration")
-    
-    # 2. Model Selection Dropdown (with callback)
-    model_choice = st.selectbox(
-        "Select Gemini Model:",
-        options=["gemini-2.5-pro", "gemini-2.5-flash"],
-        index=0, 
-        key='model_choice_select', 
-        on_change=update_word_limit_default, 
-        help="Pro = better reasoning, 1M token context. Flash = cheaper, faster, smaller context."
+    # 1. API Key Input (Required for Gemini access)
+    # Using secrets is highly recommended for production apps
+    api_key = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else st.text_input(
+        "Enter your Gemini API Key:", type="password"
     )
-    
-    # 1. API Key Input
-    api_key = st.text_input("Gemini API Key:", type="password")
-    if api_key:
-        st.session_state['api_key_valid'] = True
-        st.success("API Key Entered.")
-    else:
-        st.session_state['api_key_valid'] = False
-        st.warning("Please enter your Gemini API Key.")
 
-    st.markdown("---")
+    # 2. Input and Settings Columns
+    col1, col2 = st.columns([3, 1])
 
-    # 2. YouTube URL Input
-    yt_url = st.text_input("YouTube URL:")
-    video_id = get_video_id(yt_url)
-    if video_id:
-        st.success(f"Video ID found: {video_id}")
-    elif yt_url:
-        st.error("Invalid YouTube URL format.")
-    
-    st.markdown("---")
-    st.header("⚙️ Analysis Controls")
+    with col1:
+        video_url = st.text_input("YouTube Video URL:", help="Paste the full link here.")
+        user_prompt = st.text_area("Specific Focus/Query:", "Summarize the key concepts and formulas presented in the video.", height=100)
 
-    # 3. Automatic Chunking Behavior (Adaptive UI)
-    is_flash = model_choice == "gemini-2.5-flash"
-    num_parts = 1 # Default for Pro
-
-    if is_flash:
-        st.subheader("Chunking Settings")
-        num_parts = st.number_input(
-            "Divide transcript into how many parts?",
-            min_value=1,
-            max_value=10,
-            value=3, # Default for Flash
-            step=1,
-            key='num_parts_input',
-            help="Split transcript into parts before sending to Gemini Flash."
+    with col2:
+        st.subheader("Formatting")
+        format_choice = st.radio(
+            "PDF Layout:",
+            ["Default (Compact)", "Easier Read (Spacious & Highlighted)"],
+            index=0
         )
-    else:
-        st.info("Gemini 2.5 Pro handles the full transcript in one call (no manual chunking needed).")
-
-    # A. Max Detail Length (Word Limit)
-    st.subheader("Max Detail Length")
-    max_words = st.number_input(
-        'Word Limit per Note Item:', 
-        min_value=50, 
-        max_value=10000, 
-        value=st.session_state['max_words_value'], 
-        step=50, 
-        key='max_words_input', 
-        help="Controls the word limit for each detail/explanation extracted by the AI."
-    )
+        max_words = st.number_input("Target Length (Words):", min_value=100, max_value=2000, value=750, step=50, help="Approximate total length.")
     
-    st.markdown("---")
-
-    # B. Checkboxes for Section Selection
-    section_options = {
-        'Topic Breakdown': True, 'Key Vocabulary': True,
-        'Formulas & Principles': True, 'Teacher Insights': False, 
-        'Exam Focus Points': True, 'Common Mistakes': False,
-        'Key Points': True, 'Short Tricks': False, 'Must Remembers': True      
-    }
+    st.divider()
     
-    sections_list = []
-    st.subheader("Select Output Sections")
-    for label, default_val in section_options.items():
-        if st.checkbox(label, value=default_val):
-            sections_list.append(label)
-
-    st.markdown("---")
+    # 3. Maths/Chemistry Options (The new features)
+    st.subheader("🧪 Specialized $\\LaTeX$ Support")
     
-    # G. Custom Filename Input
-    if video_id:
-        st.session_state['output_filename_base'] = f"Notes_{video_id}"
+    math_col, chem_col, general_col = st.columns(3)
     
-    output_filename_base = st.session_state['output_filename_base']
-    output_filename = st.text_input(
-        "Base Name for PDF file:",
-        value=output_filename_base + ".pdf",
-        key="output_filename_input"
-    )
+    # Maths Checkbox
+    with math_col:
+        st.checkbox(
+            "Enable **Maths** $\sum$",
+            key='math_on',
+            help="Enables complex $\\LaTeX$ math rendering (e.g., integrals, fractions)."
+        )
+
+    # Chemistry Checkbox
+    with chem_col:
+        st.checkbox(
+            "Enable **Chemistry** $\\ce{H2O}$",
+            key='chem_on',
+            help="Enables specialized $\\LaTeX$ mhchem commands for chemical formulas."
+        )
     
-# --------------------------------------------------------------------------
-# --- Main Content: Transcript Input, Button, and Output ---
-# --------------------------------------------------------------------------
-
-# 💡 NEW: Format Selection Radio Button (Integrated Dual Format)
-format_choice = st.radio(
-    "Choose Reading Format:",
-    options=["Default (Compact)", "Easier Read (Spacious & Highlighted)"],
-    index=0,
-    horizontal=True,
-    key='pdf_format_choice',
-    help="Easier Read format adds vertical spacing between lines and enables content highlighting."
-)
-st.markdown("---")
-
-
-st.subheader("Transcript Input")
-transcript_text = st.text_area(
-    '3. Paste the video transcript here (must include timestamps):',
-    height=300,
-    placeholder="[00:00] Welcome to the lesson. [00:45] We start with Topic A..."
-)
-
-# Optional Transcript Warning
-if len(transcript_text) > WARNING_THRESHOLD_CHARS and model_choice == "gemini-2.5-flash":
-    st.warning(f"⚠️ **Long Transcript Detected!** The text is over {WARNING_THRESHOLD_CHARS} characters. We recommend selecting **Gemini 2.5 Pro** or dividing the transcript into **4 or more parts** to avoid context overflow with Flash.")
-
-user_prompt_input = st.text_area(
-    '4. Refine AI Focus (Optional Prompt):',
-    value="Ensure the output is highly condensed and only focus on practical applications and examples.",
-    height=100
-)
-
-# E. The Analysis Trigger Button
-can_run = transcript_text and video_id and st.session_state['api_key_valid']
-run_analysis = st.button(
-    f"🚀 Generate Notes using {model_choice}", 
-    type="primary", 
-    disabled=not can_run or st.session_state['processing']
-) 
-
-is_easy_read = format_choice.startswith("Easier Read")
-
-if run_analysis and not st.session_state['processing']:
-    st.session_state['processing'] = True
-    st.session_state['chunked_results'] = []
+    # General Mode Indicator
+    with general_col:
+        is_specialized = st.session_state.math_on or st.session_state.chem_on
+        mode_text = "Specialized" if is_specialized else "General"
+        st.info(f"Current Mode: **{mode_text}**")
     
-    try:
-        # 4. Transcript Splitting Logic
-        if is_flash:
-            transcript_parts = split_transcript_by_parts(transcript_text, int(num_parts))
-        else:
-            transcript_parts = [transcript_text] # Pro runs the full transcript in one part
+    st.divider()
+
+    # 4. Generate Button
+    if st.button("Generate Study Notes PDF"):
+        if not api_key:
+            st.error("Please enter your Gemini API Key.")
+            return
+
+        video_id = get_video_id(video_url)
+        if not video_id:
+            st.error("Please enter a valid YouTube URL.")
+            return
+            
+        # Mock Transcript Data (Replace with real transcript fetching logic)
+        mock_transcript = [{"time": 10, "text": "This is a concept discussed at the beginning."}, {"time": 60, "text": "We'll solve for the variable x using the quadratic formula which is x = (-b ± \\sqrt{b^2 - 4ac}) / 2a. This is a very important formula."}, {"time": 120, "text": "Now, let's look at the reaction of sulfur trioxide with water, which is $\\ce{SO3(g) + H2O(l) -> H2SO4(aq)}$. This is a core reaction."}, {"time": 180, "text": "The main idea of this lesson is that force equals mass times acceleration, F=ma."}]
         
-        st.info(f"Analyzing in **{len(transcript_parts)}** sequential part(s) using **{model_choice}**.")
+        # --- CORE ANALYSIS CALL ---
+        with st.spinner("Analyzing video transcript and structuring notes..."):
+            notes_data, error_msg, full_prompt = run_analysis_and_summarize(
+                api_key=api_key,
+                transcript_segments=mock_transcript, # Replace with your real transcript var
+                max_words=max_words,
+                sections_list_keys=["main_subject", "topic_breakdown", "key_vocabulary", "formulas_and_principles"], # Simplified for demo
+                user_prompt=user_prompt,
+                model_name=MODEL_NAME,
+                is_easy_read=format_choice.startswith("Easier Read"),
+                is_maths_on=st.session_state.math_on,   # PASS NEW FLAGS
+                is_chemistry_on=st.session_state.chem_on # PASS NEW FLAGS
+            )
 
-        # 6. Chunked Execution
-        status_bar = st.progress(0, text="Starting analysis...")
-        
-        for i, part in enumerate(transcript_parts, start=1):
-            status_bar.progress(
-                i / len(transcript_parts), 
-                text=f'Analyzing Part {i} of {len(transcript_parts)}... (Model: {model_choice})'
+        # --- PDF Generation ---
+        if notes_data:
+            st.success("Analysis complete! Generating PDF...")
+            output_buffer = BytesIO()
+            
+            # Call the new WeasyPrint function
+            save_to_pdf_weasyprint(
+                data=notes_data,
+                video_id=video_id,
+                output=output_buffer,
+                format_choice=format_choice
             )
             
-            # CRITICAL: Pass the is_easy_read flag to the API function
-            data_json, error_msg, full_prompt = run_analysis_and_summarize(
-                api_key, part, max_words, sections_list, user_prompt_input, model_choice, is_easy_read
-            )
-            
-            if data_json:
-                st.session_state['chunked_results'].append(data_json)
-            else:
-                st.error(f"Analysis failed for Part {i}. Error: {error_msg}")
-                st.session_state['chunked_results'] = []
-                break
-
-        status_bar.empty()
-
-        if st.session_state['chunked_results']:
-            st.success(f"Analysis complete for all {len(st.session_state['chunked_results'])} parts.")
-            st.session_state['pdf_ready'] = True
-        else:
-            st.session_state['pdf_ready'] = False
-            
-    finally:
-        st.session_state['processing'] = False
-
-st.markdown("---")
-
-# 7. Output Options and Download Section
-if st.session_state['chunked_results']:
-    st.subheader("🧩 Output Options")
-    combine_choice = st.radio(
-        "Choose how to handle analyzed chunks:",
-        options=["🔗 Combine all outputs into one file", "📦 Download each part separately"],
-        index=0,
-        horizontal=True,
-        key='combine_choice_radio',
-        help="You can merge all analyzed chunks into a single hyperlinked PDF, or keep each chunk's output separate."
-    )
-
-    current_dir = Path(__file__).parent
-
-    if combine_choice.startswith("🔗"):
-        st.subheader("Single Merged PDF")
-        
-        combined_data = merge_all_json_outputs(st.session_state['chunked_results'])
-        
-        pdf_output = BytesIO()
-        try:
-            with st.spinner("Generating combined PDF..."):
-                # CRITICAL: Pass the format_choice to the PDF generation function
-                save_to_pdf(combined_data, video_id, current_dir, pdf_output, format_choice)
-            
+            # Offer download button
             st.download_button(
-                label=f"⬇️ Download Merged Notes: {output_filename_base}.pdf",
-                data=pdf_output,
-                file_name=output_filename, 
-                mime="application/pdf" 
+                label="📥 Download Study Notes PDF",
+                data=output_buffer.getvalue(),
+                file_name=f"{video_id}_study_notes.pdf",
+                mime="application/pdf"
             )
-        except Exception as e:
-            st.error(f"Error generating merged PDF: {e}")
-            st.warning("Ensure font files (NotoSans-*.ttf) are in the main directory.")
+        else:
+            st.error(f"Analysis Failed: {error_msg}")
+            st.code(full_prompt, language='json', label="Prompt Sent to API (for debugging)")
 
-    else:
-        st.subheader("Separate PDF Downloads")
-        st.info("Each part represents a section of the original transcript.")
-
-        for i, part_data in enumerate(st.session_state['chunked_results'], start=1):
-            pdf_output = BytesIO()
-            
-            try:
-                with st.spinner(f"Preparing Part {i}..."):
-                    # CRITICAL: Pass the format_choice to the PDF generation function
-                    save_to_pdf(part_data, video_id, current_dir, pdf_output, format_choice)
-                
-                st.download_button(
-                    label=f"⬇️ Download Part {i}",
-                    data=pdf_output,
-                    file_name=f"{output_filename_base}_part{i}.pdf",
-                    mime="application/pdf",
-                    key=f'download_part_{i}'
-                )
-            except Exception as e:
-                st.error(f"Error generating Part {i} PDF: {e}")
-                break
-
-st.markdown("---")
-
-if not st.session_state['chunked_results'] and st.session_state.get('pdf_ready'):
-    st.warning("Analysis ran successfully, but no output was generated. Please verify your transcript and settings.")
+if __name__ == "__main__":
+    main()
