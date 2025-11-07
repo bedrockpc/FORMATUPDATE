@@ -18,7 +18,7 @@
             color: {{ colors.text_dark }};
         }
         
-        /* Typography */
+        /* Typography and Layout */
         h1 {
             color: {{ colors.primary_dark }};
             font-size: 26pt;
@@ -26,21 +26,8 @@
             margin-bottom: 20pt;
             margin-top: 10pt;
         }
-        h2 {
-            font-size: 13pt;
-            color: {{ colors.text_dark }};
-            margin-top: 18pt;
-            margin-bottom: 8pt;
-        }
-        p {
-            margin-top: {{ "6pt" if is_easy_read else "3pt" }};
-            margin-bottom: {{ "6pt" if is_easy_read else "3pt" }};
-            line-height: {{ "1.6" if is_easy_read else "1.4" }};
-            padding-left: 15pt;
-            text-indent: -15pt; /* Creates a hanging indent for the list bullet */
-        }
         
-        /* Section Header Styling (Replaces ReportLab Flowable) */
+        /* Section Header Styling */
         .section-header {
             background-color: {{ colors.primary }};
             color: white;
@@ -51,16 +38,26 @@
             font-size: 14pt;
         }
         
-        /* Item Styling */
-        .item-list p {
-            list-style: disc;
-            margin-left: 10pt;
+        .item-list {
+            padding-bottom: {{ "15pt" if is_easy_read else "10pt" }};
         }
+        
+        /* Paragraph/List Item Styling */
+        p {
+            margin-top: {{ "6pt" if is_easy_read else "3pt" }};
+            margin-bottom: {{ "6pt" if is_easy_read else "3pt" }};
+            line-height: {{ "1.6" if is_easy_read else "1.4" }};
+            padding-left: 15pt;
+            text-indent: -15pt; /* Creates a hanging indent for the list bullet */
+        }
+        
         .topic-head {
             font-weight: bold;
             color: {{ colors.text_medium }};
             margin-top: 10pt;
             margin-left: 5pt;
+            text-indent: 0;
+            padding-left: 0;
         }
 
         /* Highlighting and Links */
@@ -93,9 +90,11 @@
             }
         }
         
-        /* MathJax/KaTeX fixes for WeasyPrint */
-        /* Forces display mode to be centered and inline mode to behave */
-        .katex-display { margin: 1em 0; text-align: center !important; }
+        /* KaTeX fixes for WeasyPrint */
+        .katex-display { 
+            margin: 1em 0 !important; 
+            text-align: center !important; 
+        }
 
     </style>
 </head>
@@ -137,35 +136,26 @@
     {% endfor %}
 
     <script>
-        // Finds and renders all LaTeX expressions (both inline $...$ and display $$...$$)
-        // This is necessary because WeasyPrint processes the HTML but doesn't run JS.
-        // The script runs after the browser renders the page, but WeasyPrint captures the output before this.
-        // HOWEVER, since WeasyPrint is an HTML renderer, it often correctly interprets 
-        // the MathJax/KaTeX output on its own IF it uses an installed version of pango/cairo.
-        // We leave the JS here as a fallback/best practice, but we rely on the LaTeX
-        // being correctly output by the Gemini API and interpreted by WeasyPrint's engine.
-        // For simple $...$ and $$...$$ KaTeX usually renders them into HTML/SVG elements
-        // that are then captured by WeasyPrint.
-
         document.addEventListener("DOMContentLoaded", function() {
-            var elements = document.body.querySelectorAll('p, div, h1, h2, span');
+            var elements = document.body.querySelectorAll('p, div, span, li, dt, dd');
 
             elements.forEach(function(el) {
-                // Find and render $...$ and $$...$$ in the text content
+                // Find and render $$...$$ (Display mode)
                 el.innerHTML = el.innerHTML.replace(/\$\$([\s\S]*?)\$\$/g, function(match, formula) {
                     try {
-                        return '<span class="katex-display">' + katex.renderToString(formula.trim(), {
+                        return '<div class="katex-display">' + katex.renderToString(formula.trim(), {
                             throwOnError: false, 
                             displayMode: true 
-                        }) + '</span>';
+                        }) + '</div>';
                     } catch (e) {
-                        return match; // Return original if error
+                        return match; 
                     }
                 });
 
+                // Find and render $...$ (Inline mode)
                 el.innerHTML = el.innerHTML.replace(/\$([^$]+)\$/g, function(match, formula) {
                     // Exclude links and already processed blocks
-                    if(el.closest('a') || el.closest('.katex-display')) return match; 
+                    if(el.closest('.timestamp-link')) return match; 
                     try {
                         return katex.renderToString(formula.trim(), {
                             throwOnError: false, 
