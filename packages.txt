@@ -1,4 +1,5 @@
 # packages.txt
-pango-graphite
-pango
-cairo
+# Core dependencies for WeasyPrint's rendering engine (Pango/Cairo)
+libcairo2-dev 
+libpango-1.0-0 
+libpangoft2-1.0-0 
